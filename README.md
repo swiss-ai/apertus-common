@@ -4,11 +4,23 @@ Typed reference library for the **Apertus 2 conversation format**, following the
 `mistral-common` / `openai-harmony` route: one library to validate, parse,
 and stringify conversations, so training and serving cannot drift apart.
 
-**Status:** M0, the M1 checker, and the M1 string rendering are
-implemented. The remaining M1 work is string parsing (`parse_str`) and
-wiring `check()` to strings. Tokens, streaming parsers, and format plugins
-follow in later milestones. See [docs/design.md](docs/design.md) for the
-architecture and milestone plan.
+## Progress
+
+- [x] Immutable typed conversation model and system prompt
+- [x] Canonical input normalization and conversation conformance checker
+- [x] Wire intermediate representation and Apertus string renderer
+- [x] Native JSON conversion with `from_json()` and `to_json()`
+- [x] JSON Lines dataset convention and examples
+- [x] OpenAI chat-completions conversion with `from_openai()` and `to_openai()`
+- [ ] Streaming output parser and reference tool/reasoning parsers
+- [ ] Apertus tokenizer artifact integration and token-ID codecs
+- [ ] Packaged golden conformance fixtures
+- [ ] Synchronize and validate against the final Apertus 2 format specification
+  and tokenizer artifact once they stabilize
+
+M0 foundation and M4 format adapters are complete. The M1 checker and string
+renderer are also implemented. Full transcript parsing (`parse_str`) remains
+an optional later extension.
 
 The token-level format is defined by the
 [Apertus 2 format spec](https://github.com/swiss-ai/apertus-2-format-spec-proposal)
@@ -16,7 +28,7 @@ The token-level format is defined by the
 
 ## Overview
 
-The implemented library has three layers:
+The implemented library has four layers:
 
 - `apertus_common.model` defines immutable Pydantic models for system prompts,
   input and output messages, content parts, and complete `Conversation` values.
@@ -32,8 +44,15 @@ The implemented library has three layers:
   string and token serializations project from) and joins the string
   projection. Control tokens appear as glyphs; payload text is verbatim and
   unescaped, so a payload that spells a control glyph is ambiguous in the
-  string form (the token path is unaffected). Parsing that text back into
-  models is the next step.
+  string form (the token path is unaffected).
+- `apertus_common.formats` is the completed ingest and export layer.
+  `from_json()` / `to_json()` are harmony-style names for the model's own JSON
+  (`model_validate_json` / `model_dump_json`, the one canonical and fully
+  supported serialization) with the ingest flags `normalize`, `check`
+  (return the conformance report too), and `strict` (raise
+  `ConformanceError`); `from_openai()` / `to_openai()` map OpenAI
+  chat-completions messages to and from the typed model, a deliberately
+  lossy adapter with a stated subset and the same ingest flags.
 
 Model validation is local and immediate. It rejects an invalid field or message
 at construction time with a Pydantic `ValidationError`, such as a malformed id,
@@ -110,21 +129,122 @@ print(render_str(messy.normalized()))
 Validated models and their nested sequence/mapping containers are immutable;
 construct a new model when changing content so validation cannot be bypassed.
 
+### Datasets: JSON lines to model to string
+
+A dataset file is the JSON-lines convention over the canonical model JSON:
+one conversation per line, no library helper needed. `from_json` per line
+validates (pydantic `ValidationError` on a bad line), applies canonical
+input order by default (`normalize=False` keeps the observed order), and
+can return or enforce conformance in the same call:
+
+```python
+from apertus_common import ConformanceError, from_json, render_str, to_json
+
+with open("conversations.jsonl", encoding="utf-8") as src:
+    conversations = [from_json(line) for line in src]
+for conv in conversations:
+    print(render_str(conv))
+
+line = to_json(conversations[0])
+conv, report = from_json(line, normalize=False, check=True)   # audit observed order
+try:
+    conv = from_json(line, strict=True)                         # raise on conformance errors
+except ConformanceError as error:
+    print(error.report.errors[0].rule)
+
+with open("out.jsonl", "w", encoding="utf-8") as dst:
+    dst.writelines(to_json(conv) + "\n" for conv in conversations)
+```
+
+The line schema is `Conversation.model_json_schema()`, so external tools
+can validate a corpus without importing the library.
+
+### OpenAI messages
+
+`from_openai(messages, tools=None, *, effort="medium", continue_final_message=False, normalize=True, check=False, strict=False)`
+lifts an OpenAI chat-completions message list into a `Conversation` (same
+ingest flags as `from_json`); `to_openai(conversation)` maps back to
+`{"messages": [...]}` plus `tools` when declared and `reasoning_effort`
+when there is a system prompt. The OpenAI format cannot represent the full
+Apertus cast, so the mapping is explicitly lossy:
+
+- in: a leading `system`/`developer` message becomes `SystemPrompt.behavior`
+  (later ones become `Harness`), `user` content becomes text/image/audio
+  parts, `assistant` becomes `Think` (`reasoning_content`), `Assistant`
+  (`content`), and `ToolCall`s (ids byte for byte), `tool` becomes
+  `ToolResult`; a `Wait` closes each assistant run (unless
+  `continue_final_message=True` for prefill). Nothing is refused, and
+  `to_openai(from_openai(x))` equals `x` up to normalization (`developer`
+  comes back as `system`, assistant `content` is always present, tool-call
+  `arguments` are re-serialized compactly, `name`/unknown keys are dropped,
+  and default normalization may move a later `system` notice ahead of the
+  messages it followed; `normalize=False` keeps arrival order).
+- out: only `Harness`, `User`, `ToolResult`, `Think`, `Assistant`,
+  `ToolCall`, `Wait`, and a system prompt without `extra_tags` have a
+  counterpart; identity, behavior, and environment collapse into one
+  `system` string, and a burst not ordered reasoning, content, calls
+  becomes several assistant messages (reasoning never enters `content`).
+  Anything else (`Retrieval`, `Event`, `Attachment`, `Document`, generic
+  types, `VerifiableAnswer`, header `extras`) raises `AdapterError` rather
+  than being dropped or relabelled.
+
+```python
+from apertus_common import from_openai, render_str, to_openai
+
+messages = [
+    {"role": "user", "content": "Hello"},
+    {"role": "assistant", "content": "Hi"},
+]
+conv = from_openai(messages, effort="high")
+print(render_str(conv))
+print(to_openai(conv))
+```
+
+The same call converts a Hugging Face `datasets` chat corpus (a `messages`
+column in chat-completions shape, optionally a `tools` column; Arrow's
+`None`-filled keys are treated as absent) into the fully supported form:
+
+```python
+from datasets import load_dataset
+from apertus_common import from_openai, to_json
+
+rows = load_dataset("HuggingFaceH4/ultrachat_200k", split="train_sft", streaming=True)
+with open("ultrachat.apertus.jsonl", "w", encoding="utf-8") as sink:
+    sink.writelines(to_json(from_openai(row["messages"])) + "\n" for row in rows)
+```
+
+A corpus already in the native form travels through `datasets` as text lines
+(Arrow cannot type an item `payload` that is a string for most types and a
+part list for `user`/`attachment`, so `load_dataset("json", ...)` cannot
+infer its schema): use the `text` builder, or a JSON-string column, and hand
+the strings to `from_json`:
+
+```python
+rows = load_dataset("text", data_files="conversations.jsonl", split="train", streaming=True)
+for conv in (from_json(row["text"]) for row in rows):
+    ...
+```
+
 ### Interactive notebooks
 
-- [Core format examples](examples/core_format_examples.ipynb): construct every public
+- [Core format examples](examples/core_format_examples.ipynb): constructs every public
   model, inspects metadata and schemas, performs Python and JSON round trips,
   normalizes input order, and demonstrates immutability and validation errors.
-- [Validation examples](examples/validation_examples.ipynb): compare local model
+- [Validation examples](examples/validation_examples.ipynb): compares local model
   validation with cross-message rules, inspects and serializes reports, changes
   severities, selects checker sets, and defines a custom rule checker.
+- [Dataset examples](examples/dataset_examples.ipynb): writes and streams a
+  JSON-lines corpus with `to_json`/`from_json`, audits and normalizes it with
+  the ingest flags, converts OpenAI messages in and out, and shows what the
+  OpenAI mapping cannot carry.
 
-Launch either notebook without adding Jupyter to the library's runtime
+Launch any notebook without adding Jupyter to the library's runtime
 dependencies:
 
 ```sh
 uv run --with jupyterlab jupyter lab examples/core_format_examples.ipynb
 uv run --with jupyterlab jupyter lab examples/validation_examples.ipynb
+uv run --with jupyterlab jupyter lab examples/dataset_examples.ipynb
 ```
 
 ## Development

@@ -12,9 +12,12 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Literal, cast
 
+from apertus_common.errors import ApertusFormatError
+
 Scope = Literal["system", "items", "stream"]
 """Where a violation lives: the system prompt, an item, or (reserved for
-the string/token parsers) the raw stream between messages."""
+the optional later string/token check front ends) the raw stream between
+messages."""
 
 _RULE_ID_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*/[a-z0-9]+(?:-[a-z0-9]+)*$")
 
@@ -37,7 +40,8 @@ class Location:
     ``item`` indexes ``Conversation.items`` (meaningful only for scope
     ``"items"``); ``field`` optionally names a path inside the located
     object, such as ``"args"`` or ``"tools[1].json_schema"``. Scope
-    ``"stream"`` is reserved for parser findings with no item index.
+    ``"stream"`` is reserved for the optional later check front ends over
+    strings or token ids.
     """
 
     scope: Scope = "items"
@@ -126,3 +130,26 @@ class ConformanceReport:
 
     def __len__(self) -> int:
         return len(self.violations)
+
+
+class ConformanceError(ApertusFormatError):
+    """A conversation failed conformance where the caller asked to raise.
+
+    Raised by the ``strict=True`` ingest flags (``from_json``,
+    ``from_openai``) when the report has error-severity violations; warnings
+    never raise. ``report`` carries the full ``ConformanceReport``.
+    """
+
+    def __init__(self, report: ConformanceReport) -> None:
+        super().__init__(report)
+        self.report = report
+
+    def __str__(self) -> str:
+        errors = self.report.errors
+        shown = "; ".join(
+            f"{v.rule} at {v.location.scope}"
+            + (f" {v.location.item}" if v.location.item is not None else "")
+            + f": {v.message}"
+            for v in errors
+        )
+        return f"{len(errors)} conformance error(s): {shown}"

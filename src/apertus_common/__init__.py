@@ -3,14 +3,16 @@
 Applications should import supported types from this module rather than from
 implementation modules. It currently re-exports the complete typed model with
 its validation errors (conversations, system prompts, message classes,
-multimodal parts, type metadata) and the conformance checker (``check()``,
-the rule-family checker classes, and report types). String/token codecs,
-streaming parsing, and format adapters will extend this same top-level API in
-later milestones.
+multimodal parts, type metadata), the conformance checker (``check()``,
+the rule-family checker classes, and report types), the string
+renderer (``render_str()``), the ingest and export functions
+(``from_json``, ``to_json``, ``from_openai``, ``to_openai``). Token codecs
+and streaming parsing will extend this same top-level API in later milestones.
 """
 
 from apertus_common.checker import (
     Checker,
+    ConformanceError,
     ConformanceReport,
     IdConventionChecker,
     InputOrderChecker,
@@ -28,7 +30,12 @@ from apertus_common.checker import (
     rule_table,
 )
 from apertus_common.core import render_str
-from apertus_common.errors import ApertusFormatError, HeaderError
+from apertus_common.errors import (
+    AdapterError,
+    ApertusFormatError,
+    HeaderError,
+)
+from apertus_common.formats import from_json, from_openai, to_json, to_openai
 from apertus_common.model import (
     Assistant,
     Attachment,
@@ -60,11 +67,13 @@ from apertus_common.model import (
 )
 
 __all__ = [
+    "AdapterError",
     "ApertusFormatError",
     "Assistant",
     "Attachment",
     "AudioPart",
     "Checker",
+    "ConformanceError",
     "ConformanceReport",
     "Conversation",
     "Document",
@@ -102,8 +111,12 @@ __all__ = [
     "check",
     "default_checkers",
     "delivery_order",
+    "from_json",
+    "from_openai",
     "is_canonical_id",
     "render_str",
     "rule_table",
+    "to_json",
+    "to_openai",
     "type_info",
 ]

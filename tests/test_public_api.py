@@ -7,11 +7,13 @@ from apertus_common import Conversation
 from conftest import full_cast
 
 EXPECTED = {
+    "AdapterError",
     "ApertusFormatError",
     "Assistant",
     "Attachment",
     "AudioPart",
     "Checker",
+    "ConformanceError",
     "ConformanceReport",
     "Conversation",
     "Document",
@@ -49,9 +51,13 @@ EXPECTED = {
     "check",
     "default_checkers",
     "delivery_order",
+    "from_json",
+    "from_openai",
     "is_canonical_id",
     "render_str",
     "rule_table",
+    "to_json",
+    "to_openai",
     "type_info",
 }
 

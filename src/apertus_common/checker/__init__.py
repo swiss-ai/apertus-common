@@ -7,6 +7,7 @@ Extend by subclassing ``Checker`` and passing instances.
 
 from apertus_common.checker._check import check, default_checkers, rule_table
 from apertus_common.checker._report import (
+    ConformanceError,
     ConformanceReport,
     Location,
     Severity,
@@ -26,6 +27,7 @@ from apertus_common.checker.rules import (
 
 __all__ = [
     "Checker",
+    "ConformanceError",
     "ConformanceReport",
     "IdConventionChecker",
     "InputOrderChecker",
