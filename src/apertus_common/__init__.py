@@ -6,8 +6,10 @@ its validation errors (conversations, system prompts, message classes,
 multimodal parts, type metadata), the conformance checker (``check()``,
 the rule-family checker classes, and report types), the string
 renderer (``render_str()``), the ingest and export functions
-(``from_json``, ``to_json``, ``from_openai``, ``to_openai``). Token codecs
-and streaming parsing will extend this same top-level API in later milestones.
+(``from_json``, ``to_json``, ``from_openai``, ``to_openai``), and the
+streaming output parser (``StreamParser`` with its errors and stable
+``ParseFailure`` reasons). Token codecs are planned for this same top-level
+API.
 """
 
 from apertus_common.checker import (
@@ -33,7 +35,13 @@ from apertus_common.core import render_str
 from apertus_common.errors import (
     AdapterError,
     ApertusFormatError,
+    FramingError,
     HeaderError,
+    IncompleteMessageError,
+    MessageValidationError,
+    ParseFailure,
+    ParserStateError,
+    StreamParseError,
 )
 from apertus_common.formats import from_json, from_openai, to_json, to_openai
 from apertus_common.model import (
@@ -65,6 +73,7 @@ from apertus_common.model import (
     is_canonical_id,
     type_info,
 )
+from apertus_common.parsing import PayloadDelta, StreamParser
 
 __all__ = [
     "AdapterError",
@@ -79,19 +88,27 @@ __all__ = [
     "Document",
     "Effort",
     "Event",
+    "FramingError",
     "GenericInput",
     "GenericOutput",
     "Harness",
     "HeaderError",
     "IdConventionChecker",
     "ImagePart",
+    "IncompleteMessageError",
     "InputMessage",
     "InputOrderChecker",
     "Location",
+    "MessageValidationError",
     "OutputMessage",
+    "ParseFailure",
+    "ParserStateError",
+    "PayloadDelta",
     "Retrieval",
     "Rule",
     "Severity",
+    "StreamParseError",
+    "StreamParser",
     "SystemPrompt",
     "SystemPromptChecker",
     "TextPart",

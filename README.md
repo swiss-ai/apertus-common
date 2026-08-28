@@ -12,15 +12,16 @@ and stringify conversations, so training and serving cannot drift apart.
 - [x] Native JSON conversion with `from_json()` and `to_json()`
 - [x] JSON Lines dataset convention and examples
 - [x] OpenAI chat-completions conversion with `from_openai()` and `to_openai()`
-- [ ] Streaming output parser and reference tool/reasoning parsers
+- [x] Experimental strict streaming output parser for generated text
+- [ ] Reference tool/reasoning parsers and engine adapters
 - [ ] Apertus tokenizer artifact integration and token-ID codecs
 - [ ] Packaged golden conformance fixtures
 - [ ] Synchronize and validate against the final Apertus 2 format specification
   and tokenizer artifact once they stabilize
 
-M0 foundation and M4 format adapters are complete. The M1 checker and string
-renderer are also implemented. Full transcript parsing (`parse_str`) remains
-an optional later extension.
+The typed model, conformance checker, string renderer, and format adapters are
+implemented. Streaming output parsing is experimental. Full transcript parsing
+(`parse_str`) remains an optional later extension.
 
 The token-level format is defined by the
 [Apertus 2 format spec](https://github.com/swiss-ai/apertus-2-format-spec-proposal)
@@ -28,7 +29,7 @@ The token-level format is defined by the
 
 ## Overview
 
-The implemented library has four layers:
+The implemented library has five layers:
 
 - `apertus_common.model` defines immutable Pydantic models for system prompts,
   input and output messages, content parts, and complete `Conversation` values.
@@ -45,6 +46,10 @@ The implemented library has four layers:
   projection. Control tokens appear as glyphs; payload text is verbatim and
   unescaped, so a payload that spells a control glyph is ambiguous in the
   string form (the token path is unaffected).
+- `apertus_common.parsing` is the experimental serving reverse path:
+  `StreamParser`
+  parses one contiguous segment of model output back into typed output
+  messages, streaming-first and strict (see the parsing interface below).
 - `apertus_common.formats` is the completed ingest and export layer.
   `from_json()` / `to_json()` are harmony-style names for the model's own JSON
   (`model_validate_json` / `model_dump_json`, the one canonical and fully
@@ -53,6 +58,9 @@ The implemented library has four layers:
   `ConformanceError`); `from_openai()` / `to_openai()` map OpenAI
   chat-completions messages to and from the typed model, a deliberately
   lossy adapter with a stated subset and the same ingest flags.
+
+See the [formats guide](docs/formats.md) for the complete native JSON and
+OpenAI interfaces, mappings, loss boundaries, and errors.
 
 Model validation is local and immediate. It rejects an invalid field or message
 at construction time with a Pydantic `ValidationError`, such as a malformed id,
@@ -168,17 +176,21 @@ ingest flags as `from_json`); `to_openai(conversation)` maps back to
 when there is a system prompt. The OpenAI format cannot represent the full
 Apertus cast, so the mapping is explicitly lossy:
 
-- in: a leading `system`/`developer` message becomes `SystemPrompt.behavior`
+- in: supported `system`/`developer`, `user`, `assistant`, and `tool` messages
+  map into the typed model. A leading `system`/`developer` message becomes
+  `SystemPrompt.behavior`
   (later ones become `Harness`), `user` content becomes text/image/audio
   parts, `assistant` becomes `Think` (`reasoning_content`), `Assistant`
   (`content`), and `ToolCall`s (ids byte for byte), `tool` becomes
   `ToolResult`; a `Wait` closes each assistant run (unless
-  `continue_final_message=True` for prefill). Nothing is refused, and
-  `to_openai(from_openai(x))` equals `x` up to normalization (`developer`
+  `continue_final_message=True` for prefill). Accepted messages round-trip
+  through `to_openai(from_openai(x))` up to normalization (`developer`
   comes back as `system`, assistant `content` is always present, tool-call
   `arguments` are re-serialized compactly, `name`/unknown keys are dropped,
   and default normalization may move a later `system` notice ahead of the
-  messages it followed; `normalize=False` keeps arrival order).
+  messages it followed; `normalize=False` keeps arrival order). Unsupported
+  roles, malformed tool calls, and unsupported content-part shapes raise
+  `AdapterError`.
 - out: only `Harness`, `User`, `ToolResult`, `Think`, `Assistant`,
   `ToolCall`, `Wait`, and a system prompt without `extra_tags` have a
   counterpart; identity, behavior, and environment collapse into one
@@ -225,6 +237,44 @@ for conv in (from_json(row["text"]) for row in rows):
     ...
 ```
 
+### Parsing interface
+
+The experimental reverse direction is `StreamParser`, a strict output-only
+parser over one contiguous segment of model-generated text. Its API and error
+contract may change while tokenizer integration and serving adapters are still
+being developed:
+
+```python
+from apertus_common import StreamParseError, StreamParser
+
+parser = StreamParser()
+try:
+    for chunk in engine_stream():
+        parser.push(chunk)               # arbitrary text chunk size
+        route(parser.take_deltas())      # ordered provisional payload deltas
+        commit(parser.take_completed())  # newly validated output messages
+    parser.finish()
+except StreamParseError as error:
+    assert error.parser is parser
+    choose_consumer_policy(error.parser, error)
+
+parser.messages                       # cumulative completed messages
+parser.waiting                        # wait token accepted
+
+parsed = StreamParser.parse(text)     # batch: one push, then finish
+```
+
+The parser accepts only the canonical output grammar and stops at the first
+framing, incomplete-input, tool-payload, or model-validation failure. The
+structured exception preserves prior state, the raw uncommitted fragment, and
+the unconsumed suffix. It also exposes the exact terminal parser as
+`error.parser`, including for failures from the batch entry point. It never
+selects a recovery strategy: the consumer may retain committed messages, use
+or discard provisional deltas, expose raw output, or start a new parser. The
+future tool and reasoning parsers consume the same state. `check()` remains
+model-only; full transcript parsing (`parse_str`) is an optional later
+extension (see [docs/parsing.md](docs/parsing.md)).
+
 ### Interactive notebooks
 
 - [Core format examples](examples/core_format_examples.ipynb): constructs every public
@@ -237,6 +287,11 @@ for conv in (from_json(row["text"]) for row in rows):
   JSON-lines corpus with `to_json`/`from_json`, audits and normalizes it with
   the ingest flags, converts OpenAI messages in and out, and shows what the
   OpenAI mapping cannot carry.
+- [Parsing examples](examples/parsing_examples.ipynb): explains the experimental parser
+  architecture and interface, demonstrates streaming and batch parsing,
+  distinguishes framing, incomplete-input, model-validation, and lifecycle
+  errors, inspects raw failure state through `error.parser`, and shows
+  consumer-selected recovery with a new parser.
 
 Launch any notebook without adding Jupyter to the library's runtime
 dependencies:
@@ -245,6 +300,7 @@ dependencies:
 uv run --with jupyterlab jupyter lab examples/core_format_examples.ipynb
 uv run --with jupyterlab jupyter lab examples/validation_examples.ipynb
 uv run --with jupyterlab jupyter lab examples/dataset_examples.ipynb
+uv run --with jupyterlab jupyter lab examples/parsing_examples.ipynb
 ```
 
 ## Development
@@ -256,7 +312,6 @@ the virtualenv, and all dependencies.
 
 ```sh
 curl -LsSf https://astral.sh/uv/install.sh | sh   # if uv is missing
-git clone git@github.com:swiss-ai/apertus-common.git
 cd apertus-common
 make install           # locked sync: creates .venv/ and installs dev tools
 make test              # verify the setup

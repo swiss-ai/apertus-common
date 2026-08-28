@@ -37,7 +37,10 @@ the inner underscore is a second, finer signal:
 - **Unprefixed** (`User`, `freeze_list`, `is_registered`): the module's
   export surface, meaning re-exported publicly via `__init__.py` or
   shared with sibling modules. Staying out of `__all__` is what keeps
-  shared-only helpers package-private.
+  shared-only helpers package-private. Another package of this library
+  may import an unprefixed name directly from the `_*` module when no
+  public surface fits (the parser's reuse of the header grammar from
+  `model/_base.py` is the precedent); external code never may.
 - **Underscored** (`_coerce_payload`, `_REGISTRY`, `_MessageBase`):
   local to this module; siblings must not import it.
 

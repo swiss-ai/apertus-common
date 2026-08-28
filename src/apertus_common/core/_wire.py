@@ -31,8 +31,15 @@ class ControlToken(StrEnum):
     OUT_END = "<|/out|>"
     HDR = "<|hdr|>"
     WAIT = "<|wait|>"
+    PAD = "<|pad|>"
     IMAGE = "<|image|>"
     AUDIO = "<|audio|>"
+    IMG_START = "<|img_start|>"
+    IMG_TOKEN_START = "<|img_token_start|>"
+    IMG_END_OF_ROW = "<|img_end_of_row|>"
+    IMG_END = "<|img_end|>"
+    AUDIO_START = "<|audio_start|>"
+    AUDIO_END = "<|audio_end|>"
 
 
 @dataclass(frozen=True, slots=True)
