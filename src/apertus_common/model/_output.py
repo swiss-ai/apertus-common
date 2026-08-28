@@ -34,7 +34,7 @@ class Assistant(OutputMessage):
 
 
 class Think(OutputMessage):
-    """Reasoning; stripped from completed turns by the memory policy; durable conclusions belong elsewhere."""
+    """Reasoning stripped by memory policy; durable conclusions belong elsewhere."""
 
     type: Literal["think"] = "think"
     payload: UnicodeScalarString

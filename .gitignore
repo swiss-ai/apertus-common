@@ -7,8 +7,3 @@ __pycache__/
 .coverage
 dist/
 .idea/
-
-# Local architecture drafts, not part of the published repository.
-SPEC.md
-docs/design.md
-docs/parsing.md

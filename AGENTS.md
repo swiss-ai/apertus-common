@@ -22,8 +22,9 @@ in [SPEC.md](SPEC.md) §2):
   [swiss-ai/apertus-omni-tokenizer](https://github.com/swiss-ai/apertus-omni-tokenizer)
   (local: `/Users/rkre/swissai_repos/apertus-omni-tokenizer`, currently on
   branch `v2-on-pr24`) builds the Apertus 2 transformers tokenizer including
-  multimodal meta information; this library consumes it and never hand-edits
-  or vendors tokenizer files.
+  multimodal meta information; this library will consume it through the
+  planned tokenizer integration and never hand-edits or vendors tokenizer
+  files.
 
 ## Project context
 

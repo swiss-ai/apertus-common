@@ -4,8 +4,8 @@ A deliberately lossy adapter: the OpenAI format has one fixed role set and
 no room for most of the Apertus cast. ``from_openai`` lifts any valid
 message list (round-trip caveats on the function); ``to_openai`` maps back
 the subset stated on it and raises ``AdapterError`` for the rest. The
-response side (``finish_reason``, streaming chunks) belongs with the
-streaming parser and is not part of this module.
+planned response side (``finish_reason``, streaming chunks) belongs in a
+serving adapter over the streaming parser and is not part of this module.
 """
 
 from __future__ import annotations

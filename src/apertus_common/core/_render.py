@@ -180,8 +180,8 @@ def render_str(conversation: Conversation) -> str:
 
     Control tokens appear as their surface glyphs; payload text renders
     verbatim with no escaping or validation, so a payload that spells a
-    control glyph is ambiguous in this projection (the token path is
-    unaffected). Rendering never reorders or normalizes; run
+    control glyph is ambiguous in this projection (the planned token path will
+    avoid this ambiguity). Rendering never reorders or normalizes; run
     ``conversation.normalized()`` first for canonical input order and
     ``check()`` for conformance.
     """

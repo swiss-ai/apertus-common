@@ -41,11 +41,11 @@ The implemented library has five layers:
   returns a `ConformanceReport` instead of raising; `dataclasses.asdict()`
   converts it to JSON-ready data.
 - `apertus_common.core` renders conversations to the Apertus text format:
-  `render_str()` walks the typed model into the wire IR (the middle layer both
-  string and token serializations project from) and joins the string
-  projection. Control tokens appear as glyphs; payload text is verbatim and
-  unescaped, so a payload that spells a control glyph is ambiguous in the
-  string form (the token path is unaffected).
+  `render_str()` walks the typed model into the wire IR and joins its string
+  projection. The planned token serialization will project from the same IR.
+  Control tokens appear as glyphs; payload text is verbatim and unescaped, so a
+  payload that spells a control glyph is ambiguous in the string form (the
+  planned token path will avoid this ambiguity).
 - `apertus_common.parsing` is the experimental serving reverse path:
   `StreamParser`
   parses one contiguous segment of model output back into typed output
