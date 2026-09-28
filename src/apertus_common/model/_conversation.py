@@ -46,7 +46,7 @@ class Wait(BaseModel):
 
     ``Wait`` participates directly in :class:`Conversation.items` but is not an
     input or output message. Its ``type`` field exists only for
-    JSON discrimination; the future codec emits a bare control token.
+    JSON discrimination; the renderer emits a bare control token.
     """
 
     model_config: ClassVar[ConfigDict] = ConfigDict(

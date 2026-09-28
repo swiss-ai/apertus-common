@@ -1,7 +1,7 @@
 """Concrete input messages carrying data from the world to the model.
 
 Every class extends :class:`~apertus_common.model.InputMessage` with its fixed
-``type``, typed headers, payload shape, and order/authority metadata (format
+``type``, typed headers, payload shape, and order/authority metadata.
 ``_conversation`` imports this complete cast into its item
 union, while ``_base`` owns common header validation and ``_primitives`` owns
 payload parts. A type names a delivery channel, not a claim about its sender.

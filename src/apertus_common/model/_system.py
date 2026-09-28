@@ -4,7 +4,7 @@
 :class:`ToolSpec` describes each callable tool and its JSON-compatible
 schema. The module reuses immutable containers from ``_base`` and JSON/tool
 types from ``_primitives``. ``Conversation`` owns at most one system prompt,
-and the future codec will render its fields in canonical tag order.
+and the renderer emits its fields in canonical tag order.
 """
 
 from __future__ import annotations
@@ -93,7 +93,7 @@ class SystemPrompt(BaseModel):
 
     A :class:`Conversation` may own one prompt. It has authority rank 1 and no
     message header. ``effort`` is required; tool declarations
-    and noncanonical tags remain immutable after validation. The future codec
+    and noncanonical tags remain immutable after validation. The renderer
     renders identity, behavior, effort, tools, extra tags, then environment
     last so volatile data does not invalidate the stable prefix unnecessarily.
     """

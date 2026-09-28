@@ -1,9 +1,9 @@
 """Concrete output messages carrying model actions back to the world.
 
 Every class extends :class:`~apertus_common.model.OutputMessage` with a fixed
-or deployment-defined routing ``type`` and its payload fields (format spec
-``_conversation`` imports the cast for item discrimination; future codecs
-render these typed values, while the checker validates cross-message behavior
+or deployment-defined routing ``type`` and its payload fields.
+``_conversation`` imports the cast for item discrimination; the renderer
+renders these typed values, while the checker validates cross-message behavior
 such as tool schema conformance. Output types carry no order or authority.
 """
 

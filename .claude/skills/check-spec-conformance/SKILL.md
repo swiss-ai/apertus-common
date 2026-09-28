@@ -1,92 +1,62 @@
 ---
 name: check-spec-conformance
-description: Audit apertus-common against its normative sources, including the Apertus 2 format spec (v1 branch of apertus-2-format-spec-proposal), this repo's SPEC.md, the golden conformance files, and the tokenizer artifact from apertus-omni-tokenizer, and report divergences without changing golden files or code. Use when the user asks whether the library conforms to the spec, after implementing a component, after a spec or tokenizer update, or before a release/PR.
+description: Audit apertus-common against the Apertus format and profile, DEVELOPMENT.md scope, docs/design.md implemented contracts, and available tokenizer and conformance artifacts. Use for conformance reviews after implementation or upstream changes, or before a release; report divergences without editing code or golden files.
 ---
 
 # check-spec-conformance
 
-Verify the implementation against what is normative, and report. This skill is
-**report-only**: never edit code, and **never regenerate or edit golden files**
-because they are the conformance contract; changing them is a deliberate user
-decision, not a fix for a red test.
+Verify the implementation against its sources and report findings. This skill
+is report-only: do not edit code, documentation, or golden files, and do not
+stage or commit changes.
 
-## Normative baseline
+## Baseline
 
-| Authority | Source | Governs |
-|---|---|---|
-| Format | `git -C /Users/rkre/swissai_repos/apertus-2-format-spec-proposal show origin/v1:spec.md` (read from `origin/v1`, not the working tree; the checkout may be on another branch or dirty) | token-level format: framing, control tokens, bursts/halt states, input/output types, order & authority, multimodal, system prompt, pretraining |
-| Scope & API | `SPEC.md` in this repo | required components (§3), serving rules (§4), non-goals (§7) |
-| Contract | golden test files in this repo (location per SPEC.md §3.5; may not exist yet) | exact token ids + parse events per conversation |
-| Vocabulary | tokenizer artifact `tokenizers/Apertus_2/` in `/Users/rkre/swissai_repos/apertus-omni-tokenizer` (branch per AGENTS.md, currently `v2-on-pr24`) | control-token ids, special-token inventory, multimodal meta |
+- `DEVELOPMENT.md` owns scope, plans, exclusions, and open decisions.
+- `docs/design.md` records implemented behavior. The current pilot has not yet
+  been aligned with the current Apertus 2 profile; distinguish this known gap
+  from regressions against implemented contracts.
+- `README.md` and `AGENTS.md` identify upstream sources and local checkouts.
+  Read both `spec.md` and `profile/apertus_2/apertus_2.md` from a compatible
+  upstream revision. Do not assume the reference profile and Apertus 2 profile
+  have identical message types or payloads.
+- The tokenizer repository owns the vocabulary and control-token inventory.
+  Discover the available artifact and branch rather than assuming an old path
+  or branch is still current.
+- Golden conformance files, when available, specify exact token IDs and parser
+  results. Their packaging remains planned until implemented.
 
-Run `git -C <repo> fetch origin` first so `origin/v1` and the tokenizer branch
-are current; fetch only, never pull/checkout/reset.
+For current upstream checks, fetch refs without changing working trees. Never
+pull, checkout, or reset the source repositories. Record the revisions used;
+if fetching fails, report the local baseline and its freshness limitation.
 
-## Steps
+## Audit
 
-1. Load the baseline: the v1 `spec.md`, this repo's `SPEC.md`, and the
-   tokenizer artifact's special-token inventory (e.g. `tokenizer_config.json`
-   / `special_tokens_map.json` / added-tokens in `tokenizer.json` under
-   `tokenizers/Apertus_2/`).
-2. Inventory the implementation: package layout, which SPEC.md §3 components
-   exist (typed model, codecs, incremental parser, conformance checker,
-   OpenAI adapter, and golden files), which optional SPEC.md §5 components
-   exist, and where the tests live. If the package does not exist yet, skip to
-   the report and state the gap against SPEC.md §3; that is a valid result,
-   not a failure.
-3. Run the tests: `uv run pytest` (golden-file tests first if selectable).
-   Capture failures verbatim; never "fix" a failure by touching golden files.
-4. Walk the requirement checklist and mark each **Implemented / Partial /
-   Missing / Divergent**, with file:line evidence:
-   - every SPEC.md §3 component and §7 non-goal (non-goals must stay absent,
-     e.g. no working Jinja render path, no encode bypass for untrusted text);
-   - every SPEC.md §4 serving rule: `<|wait|>` as the only stop token,
-     decode-time suppression of input framing, special-tokens-disabled
-     encoding of untrusted text, fixed `tool_call` payload grammar
-     `{"name": ..., "args": ...}`, id echo `[A-Za-z0-9_:.-]{1,64}` with
-     `NAME:COUNTER` as the model-written convention, canonical input order,
-     unknown vs known-but-unconsumed output types, and the rank-4 default for
-     unranked types;
-   - parser guarantees (SPEC.md §3.3): strict first failure, retained terminal
-     parser state, and recovery selected only by the consumer;
-   - adapter guarantees (SPEC.md §3.4): role mapping incl. mid-conversation
-     `system` → `harness`, think → `reasoning_content` only,
-     `finish_reason` = `stop`/`tool_calls`/`length`, assistant prefill;
-   - loss-mask rules (SPEC.md §5.1): input framing never a target, output
-     framing a target where the message carries loss, think/annotation loss a
-     recipe choice.
-5. Check vocabulary compatibility: every control token the library references
-   resolves to the id the tokenizer artifact defines; flag tokens the library
-   hard-codes, misses, or that the artifact lacks.
-6. For each divergence, classify the likely cause; do not guess silently;
-   say which evidence supports it:
-   - **library bug** (spec and golden file agree, code doesn't);
-   - **library lags upstream** (spec on `origin/v1` changed; suggest running
-     `/check-stakeholder-state` for the full delta);
-   - **stale golden file** (code matches the current spec, file matches an
-     older one; regeneration is a user decision to propose, never perform);
-   - **doc drift** (SPEC.md or AGENTS.md no longer matches the spec/tokenizer).
-7. Deliver the report. Do not stage, commit, or edit anything.
+1. Read the baseline documents, format and profile, and available tokenizer
+   inventory. Note unresolved scope decisions instead of treating them as
+   requirements already adopted.
+2. Inventory the model, codecs, parser, checker, adapters, tests, and fixtures.
+   Mark each scoped capability Implemented, Partial, Missing, or Divergent.
+3. Run the repository's `make test` target. Capture relevant failures without
+   changing code or fixtures to make them pass.
+4. Compare implementation against `docs/design.md`, then separately compare it
+   against the target profile and development plan. Check framing, message and
+   header grammar, call/result relationships, authority/order, parser failure
+   behavior, adapter mappings, and documented loss boundaries.
+5. Check tokenizer compatibility when an artifact is available. Reserved IDs
+   must enter through typed structure; ordinary text must be encoded with
+   special-token recognition disabled. Report absent token integration as a
+   planned capability, not as an implemented guarantee.
+6. Verify exclusions: no Jinja maintenance or generation, multimodal
+   integration, tool execution, or harness memory/scheduling policy.
+7. Classify findings as library bugs, planned gaps, upstream drift, stale
+   fixtures, or documentation drift, with file/line and revision evidence.
 
-## Report format
+## Report
 
-Lead with a one-line verdict ("Conformant", "N divergences (M likely library
-bugs)", or "Package not started: core SPEC.md §3 scope is absent"). Then:
+Lead with the verdict and revisions checked. Summarize capability status,
+itemize divergences with evidence, and propose follow-ups ordered by impact.
+Do not silently resolve conflicts between upstream semantics and library
+scope. Propose fixture changes explicitly rather than regenerating them.
 
-- **Checklist:** the §3/§4 table with statuses; collapse long
-  fully-conformant stretches to one line, itemize everything else.
-- **Divergences:** each with evidence (file:line, failing test output, spec
-  section) and its classification from step 6.
-- **Suggested follow-ups:** ordered by severity: code fixes, proposed golden
-  regeneration (as a question to the user), doc updates, questions for
-  #765/#856. Do not apply them.
-
-## Failure handling
-
-- Spec repo or tokenizer repo unreachable/unfetchable: fall back to the local
-  checkout, and say so in the report (results may be stale).
-- Tests unrunnable (no pytest, broken env): report that as its own finding;
-  static checks still count.
-- Ambiguity between format spec and SPEC.md: format spec wins on format,
-  SPEC.md on scope/API (SPEC.md §2); flag the conflict for the user instead
-  of resolving it in either document.
+If sources are unavailable or tests cannot run, state what was checked and
+what remains unverified. Never claim conformance for unverified paths.
