@@ -1,10 +1,9 @@
 """Reusable leaf types and validators for message and system fields.
 
 This module defines effort levels, tool names and call IDs, recursively finite
-JSON values, and tagged text/image/audio payload parts. ``_system`` uses
-the tool and JSON types; ``_input`` uses multimodal
-payloads; and ``_output`` uses call IDs and arguments. These types validate and
-serialize data only; the future codec layer owns their wire representation.
+JSON values, and tagged text payload parts. ``_system`` uses
+the tool and JSON types; ``_input`` uses text payloads; and ``_output`` uses call IDs and arguments. These types validate and
+serialize data only; the renderer owns their wire representation.
 """
 
 from __future__ import annotations
@@ -12,7 +11,7 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping, Sequence
 from enum import StrEnum
-from typing import Annotated, Any, ClassVar, Literal, Self, cast
+from typing import Annotated, Any, ClassVar, Literal, cast
 
 from pydantic import (
     AfterValidator,
@@ -25,7 +24,6 @@ from pydantic import (
     StrictInt,
     StrictStr,
     WithJsonSchema,
-    model_validator,
 )
 
 from apertus_common.errors import HeaderError
@@ -211,21 +209,8 @@ type FiniteJsonObject = Annotated[
 ]
 
 
-def _reject_bool_dimension(value: object) -> object:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise ValueError(  # noqa: TRY004
-            "image dimensions must be numeric integers, not strings or booleans"
-        )
-    return value
-
-
-type PositiveDimension = Annotated[
-    int, BeforeValidator(_reject_bool_dimension), Field(gt=0)
-]
-
-
 class TextPart(BaseModel):
-    """A validated text run inside a multimodal payload.
+    """A validated text run inside a message payload.
 
     A bare string passed as a ``User`` or ``Attachment`` payload is normalized
     to an immutable sequence containing one ``TextPart``.
@@ -242,73 +227,7 @@ class TextPart(BaseModel):
     text: UnicodeScalarString
 
 
-class ImagePart(BaseModel):
-    """Metadata for one inline ``<|image|>`` placeholder.
-
-    ``ref`` lets an application associate external image data with the
-    placeholder. Optional processor-declared geometry must provide both height
-    and width. The model stores metadata only; media-token expansion belongs to
-    the future encoder.
-    """
-
-    model_config: ClassVar[ConfigDict] = ConfigDict(
-        extra="forbid",
-        frozen=True,
-        validate_default=True,
-        json_schema_extra={
-            "required": ["part"],
-            "oneOf": [
-                {
-                    "required": ["height", "width"],
-                    "properties": {
-                        "height": {"type": "integer"},
-                        "width": {"type": "integer"},
-                    },
-                },
-                {
-                    "properties": {
-                        "height": {"type": "null"},
-                        "width": {"type": "null"},
-                    }
-                },
-            ],
-        },
-    )
-
-    part: Literal["image"] = "image"
-    ref: UnicodeScalarString | None = None
-    height: PositiveDimension | None = None
-    width: PositiveDimension | None = None
-
-    @model_validator(mode="after")
-    def _check_geometry(self) -> Self:
-        if (self.height is None) != (self.width is None):
-            raise ValueError(
-                "image geometry declares both height and width, or neither"
-            )
-        return self
-
-
-class AudioPart(BaseModel):
-    """Metadata for one inline ``<|audio|>`` placeholder.
-
-    ``ref`` is an application-facing association with external audio data. The
-    model carries no audio bytes or size declaration; token expansion belongs
-    to the future encoder.
-    """
-
-    model_config: ClassVar[ConfigDict] = ConfigDict(
-        extra="forbid",
-        frozen=True,
-        validate_default=True,
-        json_schema_extra={"required": ["part"]},
-    )
-
-    part: Literal["audio"] = "audio"
-    ref: UnicodeScalarString | None = None
-
-
-Part = Annotated[TextPart | ImagePart | AudioPart, Field(discriminator="part")]
+Part = Annotated[TextPart, Field(discriminator="part")]
 
 
 def _coerce_payload(value: object) -> object:
@@ -324,5 +243,5 @@ Payload = Annotated[
 """Immutable part sequence used by ``User`` and ``Attachment`` payloads.
 
 A bare string is normalized to a single :class:`TextPart`; an explicit list may
-mix tagged text, image, and audio parts.
+contain multiple text parts.
 """

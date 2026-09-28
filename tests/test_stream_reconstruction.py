@@ -2,6 +2,8 @@
 
 import random
 
+import pytest
+
 from apertus_common import (
     Assistant,
     Conversation,
@@ -78,6 +80,29 @@ def test_awkward_payloads_round_trip() -> None:
         text = render_str(Conversation(items=[message]))
         parser = StreamParser.parse(text)
         assert parser.messages == (message,), repr(payload)
+
+
+@pytest.mark.parametrize(
+    "glyph",
+    [
+        "<|image|>",
+        "<|audio|>",
+        "<|img_start|>",
+        "<|img_token_start|>",
+        "<|img_end_of_row|>",
+        "<|img_end|>",
+        "<|audio_start|>",
+        "<|audio_end|>",
+    ],
+)
+def test_former_media_glyphs_are_literal_text(glyph: str) -> None:
+    message = Assistant(payload=f"literal {glyph} tail")
+    text = render_str(Conversation(items=[message]))
+    for chunks in ([text], list(text)):
+        parser, deltas = feed(chunks)
+        assert parser.messages == (message,)
+        assert parser.take_completed() == [message]
+        assert "".join(delta.text for delta in deltas) == message.payload
 
 
 def test_split_invariance_of_messages_and_deltas() -> None:

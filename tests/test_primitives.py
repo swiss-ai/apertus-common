@@ -1,14 +1,15 @@
 """Tool-call ids, payload parts, and payload coercion."""
 
+import json
+
 import pytest
 from pydantic import ValidationError
 
 from apertus_common import (
-    AudioPart,
-    ImagePart,
     TextPart,
     ToolResult,
     User,
+    from_json,
     is_canonical_id,
 )
 
@@ -53,34 +54,36 @@ def test_is_canonical_id(value: str, canonical: bool) -> None:
     assert is_canonical_id(value) is canonical
 
 
-def test_image_geometry_both_or_neither() -> None:
-    assert ImagePart().height is None
-    assert ImagePart(height=2, width=3).width == 3
-    with pytest.raises(ValidationError):
-        ImagePart(height=2)
-    with pytest.raises(ValidationError):
-        ImagePart(width=3)
-    with pytest.raises(ValidationError):
-        ImagePart(height=0, width=3)
-    with pytest.raises(ValidationError):
-        ImagePart(height=True, width=True)
-    with pytest.raises(ValidationError):
-        ImagePart(height="2", width="3")
-    with pytest.raises(ValidationError):
-        ImagePart(height=b"2", width=b"3")
-    assert ImagePart(height=2.0, width=3.0) == ImagePart(height=2, width=3)
-
-
 def test_payload_parts() -> None:
     assert User(payload="hi").payload == [TextPart(text="hi")]
     parts = [
         TextPart(text="look: "),
-        ImagePart(ref="a.jpg", height=2, width=3),
-        AudioPart(ref="b.ogg"),
+        TextPart(text="a text attachment"),
     ]
     assert User(payload=parts).payload == parts
+
+
+def test_payload_mapping_requires_text_tag() -> None:
+    with pytest.raises(ValidationError):
+        User.model_validate({"payload": [{"text": "missing part tag"}]})
 
 
 def test_lone_surrogate_text_is_rejected() -> None:
     with pytest.raises(ValidationError):
         User(payload="\ud800")
+
+
+@pytest.mark.parametrize("kind", ["image", "audio"])
+@pytest.mark.parametrize("message_type", ["user", "attachment"])
+def test_native_media_parts_are_rejected(kind: str, message_type: str) -> None:
+    data = {
+        "items": [
+            {
+                "direction": "in",
+                "type": message_type,
+                "payload": [{"part": kind, "ref": "asset://example"}],
+            }
+        ]
+    }
+    with pytest.raises(ValidationError):
+        from_json(json.dumps(data))

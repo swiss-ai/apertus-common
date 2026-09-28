@@ -101,11 +101,11 @@ def test_plain_angle_bracket_text_is_not_delayed() -> None:
 
 def test_pending_after_truncated_glyph() -> None:
     lexer = TextLexer()
-    assert list(lexer.push("<|img_end_of_r")) == []
-    assert lexer.pending == "<|img_end_of_r"
+    assert list(lexer.push("<|wai")) == []
+    assert lexer.pending == "<|wai"
     assert lexer.pending_start == 0
     assert list(lexer.finish()) == []
-    assert lexer.pending == "<|img_end_of_r"
+    assert lexer.pending == "<|wai"
 
 
 def test_pending_offset_tracks_absolute_position() -> None:

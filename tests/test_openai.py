@@ -4,16 +4,15 @@ import pickle
 from typing import Any
 
 import pytest
+from pydantic import ValidationError
 
 from apertus_common import (
     AdapterError,
     Assistant,
-    AudioPart,
     ConformanceError,
     Conversation,
     Effort,
     Harness,
-    ImagePart,
     Retrieval,
     SystemPrompt,
     TextPart,
@@ -153,26 +152,51 @@ def test_later_system_is_harness_and_back() -> None:
     ]
 
 
-def test_multimodal_parts_both_ways() -> None:
-    parts = [
-        {"type": "text", "text": "Look: "},
-        {"type": "image_url", "image_url": {"url": "https://x/1.png"}},
-        {"type": "input_audio", "input_audio": {"data": "AAAA", "format": "wav"}},
-    ]
+def test_text_parts_both_ways() -> None:
+    parts = [{"type": "text", "text": "Look: "}, {"type": "text", "text": "a report"}]
     conv = from_openai([{"role": "user", "content": parts}])
-    assert list(conv.items[0].payload) == [  # type: ignore[union-attr]
-        TextPart(text="Look: "),
-        ImagePart(ref="https://x/1.png"),
-        AudioPart(ref="AAAA"),
-    ]
-    out = to_openai(conv)["messages"][0]["content"]
-    assert out == [
-        {"type": "text", "text": "Look: "},
-        {"type": "image_url", "image_url": {"url": "https://x/1.png"}},
-        {"type": "input_audio", "input_audio": {"data": "AAAA"}},  # format dropped
-    ]
+    assert conv.items[0] == User(
+        payload=[TextPart(text="Look: "), TextPart(text="a report")]
+    )
+    assert to_openai(conv)["messages"][0]["content"] == parts
     single = from_openai([{"role": "user", "content": [{"type": "text", "text": "t"}]}])
     assert to_openai(single)["messages"][0]["content"] == "t"
+
+
+@pytest.mark.parametrize(
+    "part",
+    [
+        {"type": "image_url", "image_url": {"url": "https://example.com/image.png"}},
+        {"type": "input_audio", "input_audio": {"data": "AAAA", "format": "wav"}},
+    ],
+)
+def test_openai_media_parts_are_rejected(part: dict[str, Any]) -> None:
+    with pytest.raises(AdapterError) as info:
+        from_openai(
+            [
+                {"role": "user", "content": "hello"},
+                {"role": "user", "content": [{"type": "text", "text": "Look: "}, part]},
+            ]
+        )
+    assert (info.value.where, info.value.index) == ("message", 1)
+    assert "unsupported content part" in info.value.reason
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        {"role": "user", "content": [{"type": "text", "text": "\ud800"}]},
+        {"role": "assistant", "content": "\ud800"},
+        {"role": "assistant", "reasoning_content": "\ud800"},
+        {"role": "system", "content": "\ud800"},
+        {"role": "developer", "content": "\ud800"},
+    ],
+)
+def test_invalid_text_has_adapter_error_location(message: dict[str, Any]) -> None:
+    with pytest.raises(AdapterError) as info:
+        from_openai([{"role": "user", "content": "hello"}, message])
+    assert (info.value.where, info.value.index) == ("message", 1)
+    assert isinstance(info.value.__cause__, ValidationError)
 
 
 def test_tool_arguments_parsing() -> None:

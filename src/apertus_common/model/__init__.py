@@ -36,9 +36,7 @@ from apertus_common.model._output import (
     VerifiableAnswer,
 )
 from apertus_common.model._primitives import (
-    AudioPart,
     Effort,
-    ImagePart,
     TextPart,
     is_canonical_id,
 )
@@ -47,7 +45,6 @@ from apertus_common.model._system import SystemPrompt, ToolSpec
 __all__ = [
     "Assistant",
     "Attachment",
-    "AudioPart",
     "Conversation",
     "Document",
     "Effort",
@@ -55,7 +52,6 @@ __all__ = [
     "GenericInput",
     "GenericOutput",
     "Harness",
-    "ImagePart",
     "InputMessage",
     "OutputMessage",
     "Retrieval",

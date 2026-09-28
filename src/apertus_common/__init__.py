@@ -3,7 +3,7 @@
 Applications should import supported types from this module rather than from
 implementation modules. It currently re-exports the complete typed model with
 its validation errors (conversations, system prompts, message classes,
-multimodal parts, type metadata), the conformance checker (``check()``,
+text parts, type metadata), the conformance checker (``check()``,
 the rule-family checker classes, and report types), the string
 renderer (``render_str()``), the ingest and export functions
 (``from_json``, ``to_json``, ``from_openai``, ``to_openai``), and the
@@ -47,7 +47,6 @@ from apertus_common.formats import from_json, from_openai, to_json, to_openai
 from apertus_common.model import (
     Assistant,
     Attachment,
-    AudioPart,
     Conversation,
     Document,
     Effort,
@@ -55,7 +54,6 @@ from apertus_common.model import (
     GenericInput,
     GenericOutput,
     Harness,
-    ImagePart,
     InputMessage,
     OutputMessage,
     Retrieval,
@@ -80,7 +78,6 @@ __all__ = [
     "ApertusFormatError",
     "Assistant",
     "Attachment",
-    "AudioPart",
     "Checker",
     "ConformanceError",
     "ConformanceReport",
@@ -94,7 +91,6 @@ __all__ = [
     "Harness",
     "HeaderError",
     "IdConventionChecker",
-    "ImagePart",
     "IncompleteMessageError",
     "InputMessage",
     "InputOrderChecker",

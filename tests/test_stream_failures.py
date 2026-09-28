@@ -147,14 +147,6 @@ def test_output_scope_rejects_every_foreign_control() -> None:
         "<|in|>",
         "<|/in|>",
         "<|pad|>",
-        "<|image|>",
-        "<|audio|>",
-        "<|img_start|>",
-        "<|img_token_start|>",
-        "<|img_end_of_row|>",
-        "<|img_end|>",
-        "<|audio_start|>",
-        "<|audio_end|>",
     ):
         error = failing(glyph)
         assert error.reason is ParseFailure.UNEXPECTED_CONTROL, glyph

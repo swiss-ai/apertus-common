@@ -21,11 +21,9 @@ from apertus_common.errors import AdapterError
 from apertus_common.formats._json import finish
 from apertus_common.model import (
     Assistant,
-    AudioPart,
     Conversation,
     Effort,
     Harness,
-    ImagePart,
     InputMessage,
     OutputMessage,
     SystemPrompt,
@@ -69,20 +67,8 @@ def _text(value: object, index: int, key: str) -> str:
     raise _fail(index, f"{key} must be a string or a list of parts")
 
 
-def _nested_str(part: Mapping[str, object], outer: str, inner: str, index: int) -> str:
-    container = part.get(outer)
-    value = (
-        cast(Mapping[str, object], container).get(inner)
-        if isinstance(container, Mapping)
-        else None
-    )
-    if not isinstance(value, str):
-        raise _fail(index, f"{outer} part needs {outer}.{inner}")
-    return value
-
-
 def _user_payload(value: object, index: int) -> str | list[object]:
-    """User content: a string, or text/image/audio parts."""
+    """User content: a string or text parts; unsupported parts are rejected."""
     if not isinstance(value, list):
         return _text(value, index, "content")
     parts: list[object] = []
@@ -90,11 +76,7 @@ def _user_payload(value: object, index: int) -> str | list[object]:
         part = _mapping(raw, index, "content part")
         kind = part.get("type")
         if kind == "text" and isinstance(part.get("text"), str):
-            parts.append(TextPart(text=cast(str, part["text"])))
-        elif kind == "image_url":
-            parts.append(ImagePart(ref=_nested_str(part, "image_url", "url", index)))
-        elif kind == "input_audio":
-            parts.append(AudioPart(ref=_nested_str(part, "input_audio", "data", index)))
+            parts.append(_construct(index, TextPart, text=part["text"]))
         else:
             raise _fail(index, f"unsupported content part type {kind!r}")
     return parts
@@ -226,8 +208,7 @@ def from_openai(
     prompt's ``behavior`` (there is always a system prompt, since ``effort``
     is required; pass the request's ``reasoning_effort`` as *effort*); a later
     ``system``/``developer`` becomes ``Harness``; ``user`` content maps to
-    text, image (``image_url.url`` as ``ref``), and audio
-    (``input_audio.data`` as ``ref``) parts; ``assistant`` yields, in order,
+    text parts; ``assistant`` yields, in order,
     ``Think`` from ``reasoning_content``, ``Assistant`` from ``content``, and
     one ``ToolCall`` per ``tool_calls`` entry (JSON-string ``arguments``
     parsed, ids kept byte for byte); ``tool`` becomes ``ToolResult``. *tools*
@@ -237,12 +218,14 @@ def from_openai(
     A ``Wait`` closes each run of assistant messages, including a trailing
     one unless ``continue_final_message=True`` (prefill: the last burst stays
     open). Ingest flags ``normalize``, ``check``, ``strict`` as documented on
-    the ``formats`` package. ``to_openai(from_openai(x))`` equals ``x`` up to
-    normalization: ``developer`` comes back as ``system``, assistant
+    the ``formats`` package. Round trips normalize representations:
+    singleton user text-part lists become strings, adjacent assistant messages
+    may merge, empty reasoning/content segments may be omitted, and
+    ``developer`` comes back as ``system``. Assistant
     ``content`` is always present (``null`` when absent), ``tool_calls``
     carry ``type`` and compact re-serialized ``arguments``,
-    ``reasoning_effort`` is always emitted, ``name``/``detail``/``format``/
-    ``strict`` and unknown keys are dropped, and the default normalization
+    ``reasoning_effort`` is always emitted, ``name``/``strict`` and unknown keys
+    are dropped, and the default normalization
     may move a later ``system`` notice ahead of the ``user`` or ``tool``
     messages it followed (``normalize=False`` keeps arrival order). A
     message that cannot be mapped raises ``AdapterError`` (``where="message"``,
@@ -262,9 +245,9 @@ def from_openai(
             content = _text(message.get("content"), index, "content")
             calls = _tool_calls(message.get("tool_calls"), index)
             if think:
-                items.append(Think(payload=think))
+                items.append(_construct(index, Think, payload=think))
             if content or (not think and not calls):
-                items.append(Assistant(payload=content))
+                items.append(_construct(index, Assistant, payload=content))
             items.extend(calls)
             continue
         if open_run:
@@ -275,7 +258,7 @@ def from_openai(
             if index == 0:
                 behavior = text or None
             else:
-                items.append(Harness(payload=text))
+                items.append(_construct(index, Harness, payload=text))
         elif role == "user":
             payload = _user_payload(message.get("content"), index)
             items.append(_construct(index, User, payload=payload))
@@ -319,17 +302,9 @@ def _tool_dicts(system: SystemPrompt) -> list[dict[str, Any]]:
 
 def _user_content(user: User) -> str | list[dict[str, Any]]:
     parts = list(user.payload)
-    if len(parts) == 1 and isinstance(parts[0], TextPart):
+    if len(parts) == 1:
         return parts[0].text
-    content: list[dict[str, Any]] = []
-    for part in parts:
-        if isinstance(part, TextPart):
-            content.append({"type": "text", "text": part.text})
-        elif isinstance(part, ImagePart):
-            content.append({"type": "image_url", "image_url": {"url": part.ref}})
-        else:
-            content.append({"type": "input_audio", "input_audio": {"data": part.ref}})
-    return content
+    return [{"type": "text", "text": part.text} for part in parts]
 
 
 class _Burst:
