@@ -11,7 +11,6 @@ EXPECTED = {
     "ApertusFormatError",
     "Assistant",
     "Attachment",
-    "AudioPart",
     "Checker",
     "ConformanceError",
     "ConformanceReport",
@@ -25,7 +24,6 @@ EXPECTED = {
     "Harness",
     "HeaderError",
     "IdConventionChecker",
-    "ImagePart",
     "IncompleteMessageError",
     "InputMessage",
     "InputOrderChecker",
@@ -91,7 +89,8 @@ def test_json_schema_encodes_runtime_constraints() -> None:
     assert "pattern" in extras["propertyNames"]
     assert "id" in extras["propertyNames"]["not"]["enum"]
 
-    assert "oneOf" in definitions["ImagePart"]
+    assert "ImagePart" not in definitions
+    assert "AudioPart" not in definitions
 
 
 def test_json_schema_accepts_dumps_and_rejects_invalid_models() -> None:
@@ -159,7 +158,7 @@ def test_json_schema_accepts_dumps_and_rejects_invalid_models() -> None:
                 {
                     "direction": "in",
                     "type": "user",
-                    "payload": [{"part": "image", "height": 2}],
+                    "payload": [{"part": "image", "ref": "asset://example"}],
                 }
             ]
         },

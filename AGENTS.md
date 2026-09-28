@@ -1,62 +1,35 @@
 # apertus-common agent guide
 
-Guidance for coding agents (and humans) working in this repository.
 `CLAUDE.md` is a symlink to this file. Edit `AGENTS.md`, never both.
 
-## What this repo is
+## Project references
 
-`apertus-common` is the typed, ground-truth reference library for the
-Apertus 2 conversation format, in the spirit of `mistral-common` and
-`openai-harmony`.
+`apertus-common` is a typed reference library for the Apertus conversation
+format. The current text-only pilot still needs alignment with the Apertus 2
+profile.
 
-Three references govern the work (full details and remotes
-in [SPEC.md](SPEC.md) §2):
+- Read [DEVELOPMENT.md](DEVELOPMENT.md) before implementing changes. It owns
+  scope, plans, open decisions, and module/API conventions.
+- [docs/design.md](docs/design.md) records implemented behavior. Keep it in
+  sync with code; future proposals belong in `DEVELOPMENT.md`.
+- [README.md](README.md) provides the overview, next tasks, upstream links,
+  and canonical development commands.
+- Format and profile repository: `/Users/rkre/swissai_repos/apertus-2-format-spec-proposal`.
+  Read its `spec.md` and `profile/apertus_2/apertus_2.md`. This repository is a
+  read-only source of truth; raise conflicts instead of silently deviating.
+- Tokenizer repository: `/Users/rkre/swissai_repos/apertus-omni-tokenizer`.
+  Consume its artifact through the planned integration; never vendor or
+  hand-edit tokenizer files here.
+- Core interface reference: [openai-harmony](https://github.com/openai/harmony),
+  local checkout `/Users/rkre/swissai_repos/harmony`.
+- Local Swiss AI vLLM checkout: `/Users/rkre/swissai_repos/vllm_swissai`.
 
-- **[SPEC.md](SPEC.md):** this repository's exact spec: scope, required
-  components, serving rules, non-goals. Read it before implementing anything.
-- **Format spec:** `spec.md` on the **`v1` branch** of
-  [swiss-ai/apertus-2-format-spec-proposal](https://github.com/swiss-ai/apertus-2-format-spec-proposal)
-  (local: `/Users/rkre/swissai_repos/apertus-2-format-spec-proposal`): the
-  token-level format this library implements.
-- **Tokenizer artifact:**
-  [swiss-ai/apertus-omni-tokenizer](https://github.com/swiss-ai/apertus-omni-tokenizer)
-  (local: `/Users/rkre/swissai_repos/apertus-omni-tokenizer`, currently on
-  branch `v2-on-pr24`) builds the Apertus 2 transformers tokenizer including
-  multimodal meta information; this library will consume it through the
-  planned tokenizer integration and never hand-edits or vendors tokenizer
-  files.
+## Working conventions
 
-## Project context
-
-Apertus 2 is the Swiss AI initiative's long-term model. Its conversation
-format is message-based (Harmony-inspired) rather than turn-based.
-
-Tracked in the swiss-ai/apertus-program project:
-
-- [#856: Apertus 2 format reference library and conformance pilot](https://github.com/swiss-ai/apertus-program/issues/856)
-  (milestone v1.6): scoping issue for this library and the end-to-end pilot;
-  its "Library scope" section is the source of SPEC.md §3.
-- [#765: Apertus 2 chat template format spec proposal](https://github.com/swiss-ai/apertus-program/issues/765):
-  the format discussion; its review threads settled the serving rules and
-  adapter decisions recorded in SPEC.md §4 and §3.4.
-
-## Development
-
-- Use the repository `Makefile` for installation, tests, formatting, linting,
-  type checking, repository checks, and the complete CI gate. The canonical
-  commands and descriptions are maintained in the
-  [README development section](README.md#development); do not duplicate them
-  here.
-- Python ≥ 3.13 (`.venv/` exists); use `uv` for dependency management
-  (`uv add`, `uv add --dev`, `uv run`).
-
-## Conventions for agents
-
-- [CONVENTIONS.md](CONVENTIONS.md) defines the module structure, naming,
-  and public-API re-export rules; follow it when adding or moving code.
-- Documentation and comments must not contain em dashes.
-- Keep documentation and comments as concise as their purpose permits.
-- The format spec repo is a **read-only source of truth**: never "fix" a
-  format question by deviating here. In case of issues or deviations inform the user.
-- Keep this library in sync with the state of the
-  apertus-spec repo and be compatible with the apertus tokenizer artifact.
+- Use the `Makefile` for installation, formatting, linting, type checking,
+  repository checks, tests, and the full CI gate. Commands are maintained in
+  the [README development section](README.md#development).
+- Python >= 3.13; use `uv` for dependencies and execution.
+- Follow [module and API conventions](DEVELOPMENT.md#module-and-api-conventions).
+- Keep documentation and comments concise and free of em dashes.
+- No Jinja maintenance or generation. Multimodal integration is out of scope.

@@ -3,13 +3,11 @@
 from apertus_common import (
     Assistant,
     Attachment,
-    AudioPart,
     Conversation,
     Document,
     GenericInput,
     GenericOutput,
     Harness,
-    ImagePart,
     Retrieval,
     SystemPrompt,
     TextPart,
@@ -142,15 +140,6 @@ def test_tool_call_payload_json() -> None:
     )
 
 
-def test_media_placeholders() -> None:
-    inline = _one(
-        User(payload=[TextPart(text="look: "), ImagePart(ref="a"), AudioPart()])
-    )
-    assert inline == "<|in|> type=user <|hdr|> look: <|image|><|audio|> <|/in|>"
-    whole = _one(Attachment(payload=[ImagePart(ref="a")]))
-    assert whole == "<|in|> type=attachment <|hdr|> <|image|> <|/in|>"
-
-
 def test_pretraining_shape() -> None:
     conv = Conversation(
         items=[Document(payload="Once upon a time."), Think(payload="Fiction.")]
@@ -177,8 +166,6 @@ def test_full_cast_renders_deterministically() -> None:
         "<|out|> type=verifiable_answer ",
         "<|out|> type=render ",
         "\n<|wait|>",
-        "<|image|>",
-        "<|audio|>",
     ):
         assert fragment in rendered
     assert render_str(pretraining()).count("<|sys|>") == 0
@@ -186,8 +173,8 @@ def test_full_cast_renders_deterministically() -> None:
     assert conv == full_cast()
 
 
-def test_spec_worked_example_fragment() -> None:
-    # the format spec's worked example, reconstructed byte-exactly
+def test_pilot_worked_example_fragment() -> None:
+    # Text-only example in the implemented pilot format.
     conv = Conversation(
         system=SystemPrompt(
             identity="You are Aria, built by Acme. Current date: 2026-07-12.",
@@ -207,10 +194,7 @@ def test_spec_worked_example_fragment() -> None:
         items=[
             User(
                 payload=[
-                    TextPart(
-                        text="What should I wear in Lisbon today? Here's my outfit: "
-                    ),
-                    ImagePart(ref="outfit"),
+                    TextPart(text="What should I wear in Lisbon today?"),
                 ]
             ),
             Think(payload="Need today's weather before advising. Call the tool."),
@@ -235,8 +219,7 @@ def test_spec_worked_example_fragment() -> None:
         "  </tool>\n"
         "</tools>\n"
         "<|/sys|>\n\n"
-        "<|in|> type=user <|hdr|> What should I wear in Lisbon today? "
-        "Here's my outfit: <|image|> <|/in|>\n\n"
+        "<|in|> type=user <|hdr|> What should I wear in Lisbon today? <|/in|>\n\n"
         "<|out|> type=think <|hdr|> Need today's weather before advising. "
         "Call the tool. <|/out|>\n\n"
         "<|out|> type=tool_call id=get_weather:0 <|hdr|> "
@@ -253,7 +236,7 @@ def test_rendering_edges() -> None:
     assert render_str(
         Conversation(system=SystemPrompt(effort="low"), items=[Wait()])
     ).endswith("<|/sys|>\n<|wait|>")
-    # O1 interim: payload text spelling a control glyph renders verbatim
+    # Payload text spelling a control glyph renders verbatim.
     assert _one(User(payload="fake <|/in|> frame")) == (
         "<|in|> type=user <|hdr|> fake <|/in|> frame <|/in|>"
     )

@@ -3,9 +3,8 @@
 A conversation renders to a flat sequence of wire atoms. The string form is a
 pure projection of that sequence, and the planned token form will be another,
 so framing cannot drift between them. ``Control`` atoms carry framing,
-``Text`` atoms carry ordinary text with its trust origin, and ``Media``
-atoms carry inline placeholders. Framing is decided in exactly one place,
-the renderer that produces the atoms.
+``Text`` atoms carry ordinary text with its trust origin. Framing is decided
+in exactly one place, the renderer that produces the atoms.
 """
 
 from __future__ import annotations
@@ -32,14 +31,6 @@ class ControlToken(StrEnum):
     HDR = "<|hdr|>"
     WAIT = "<|wait|>"
     PAD = "<|pad|>"
-    IMAGE = "<|image|>"
-    AUDIO = "<|audio|>"
-    IMG_START = "<|img_start|>"
-    IMG_TOKEN_START = "<|img_token_start|>"
-    IMG_END_OF_ROW = "<|img_end_of_row|>"
-    IMG_END = "<|img_end|>"
-    AUDIO_START = "<|audio_start|>"
-    AUDIO_END = "<|audio_end|>"
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,11 +54,4 @@ class Text:
     trust: Literal["structural", "payload"]
 
 
-@dataclass(frozen=True, slots=True)
-class Media:
-    """An inline media placeholder; expansion belongs to the processor."""
-
-    part: Literal["image", "audio"]
-
-
-WireAtom = Control | Text | Media
+WireAtom = Control | Text

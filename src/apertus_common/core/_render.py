@@ -10,19 +10,15 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterator
-from typing import assert_never
 
-from apertus_common.core._wire import Control, ControlToken, Media, Text, WireAtom
+from apertus_common.core._wire import Control, ControlToken, Text, WireAtom
 from apertus_common.model import (
     Attachment,
-    AudioPart,
     Conversation,
-    ImagePart,
     InputMessage,
     OutputMessage,
     Retrieval,
     SystemPrompt,
-    TextPart,
     ToolCall,
     ToolResult,
     Wait,
@@ -110,18 +106,7 @@ def _payload_atoms(message: InputMessage | OutputMessage) -> list[WireAtom]:
     payload = getattr(message, "payload")  # noqa: B009
     if isinstance(payload, str):
         return [_payload(payload)] if payload else []
-    atoms: list[WireAtom] = []
-    for part in payload:
-        if isinstance(part, TextPart):
-            if part.text:
-                atoms.append(_payload(part.text))
-        elif isinstance(part, ImagePart):
-            atoms.append(Media("image"))
-        elif isinstance(part, AudioPart):
-            atoms.append(Media("audio"))
-        else:
-            assert_never(part)
-    return atoms
+    return [_payload(part.text) for part in payload if part.text]
 
 
 def _message_atoms(message: InputMessage | OutputMessage) -> Iterator[WireAtom]:
@@ -169,10 +154,7 @@ def to_wire(conversation: Conversation) -> tuple[WireAtom, ...]:
 def _atom_str(atom: WireAtom) -> str:
     if isinstance(atom, Control):
         return atom.token.value
-    if isinstance(atom, Text):
-        return atom.text
-    token = ControlToken.IMAGE if atom.part == "image" else ControlToken.AUDIO
-    return token.value
+    return atom.text
 
 
 def render_str(conversation: Conversation) -> str:

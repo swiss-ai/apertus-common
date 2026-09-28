@@ -1,326 +1,659 @@
-# apertus-common architecture
+# Implemented design
 
-This document owns implementation architecture and the rationale behind major
-design choices. [SPEC.md](../SPEC.md) owns library scope and public guarantees;
-[roadmap.md](roadmap.md) owns sequencing, status, and unresolved work. External
-ground truth for the token format is `spec.md` on the `v1` branch of
-[swiss-ai/apertus-2-format-spec-proposal](https://github.com/swiss-ai/apertus-2-format-spec-proposal).
+This document describes the code and public behavior currently implemented in
+`apertus-common`. Development scope, conventions, future work, and unresolved
+questions live in [DEVELOPMENT.md](../DEVELOPMENT.md). The
+[README](../README.md) provides an overview and the next tasks.
 
-## 1. Architecture
+The implementation is a text-only pilot of the earlier conversation format.
+It has not yet been adapted to the current Apertus 2 profile. The experimental
+streaming parser is implemented, but its interface is not considered stable.
 
-### 1.1 Representations and data flow
+## Architecture
 
-The implemented codec has public **Model** and **String** representations plus
-an internal **wire IR**. The planned tokenizer binding will add the **Tokens**
-representation as a second projection of the same wire IR. Native JSON and
-OpenAI messages are model adapters rather than wire codecs.
+```text
+Native JSON / OpenAI messages
+              | formats/
+              v
+        Conversation -> wire IR -> rendered string
 
-```
-external forms (native JSON, OpenAI messages)
-                  │ formats/
-                  ▼
-            Conversation ── render ──▶ Wire IR ── project ──▶ String
-
-generated String ── TextLexer ──▶ Lexemes ──▶ OutputMachine ──▶ OutputMessage
-
-planned: Wire IR ── tokenizer binding ──▶ Token IDs
-planned: Token IDs ── TokenLexer ──▶ shared OutputMachine
+generated string -> TextLexer -> lexemes -> OutputMachine -> output messages
 ```
 
-- A **wire atom** is one atom of the wire form: `Control(token)` (framing),
-  `Text(str, trust)` (ordinary text with its trust origin), or `Media(part)`
-  (an inline placeholder). Framing exists in exactly one place: the
-  Model-to-wire renderer. All separator whitespace is emitted as explicit
-  structural `Text` atoms, so every projection is pure concatenation.
-- String output is the implemented projection: control glyphs plus verbatim
-  text. The planned token projection will map controls to registered IDs and
-  encode ordinary text with special-token recognition disabled. Its required
-  invariant is `encode(m) == tokenize(render_str(m))` on the unambiguous string
-  subset (D2).
-- The renderer preserves adjacent `Text` atoms, including separate adjacent
-  `TextPart` values. The string projection joins them directly. The planned
-  token projection must buffer each maximal run of `Text` and encode the
-  concatenated run once, because source `TextPart` boundaries have no wire
-  meaning and encoding the parts separately can change token IDs.
-- The `Text.trust` tag records provenance only: `structural` text is written by
-  the renderer and `payload` text comes from model content. It is not a
-  tokenizer-call boundary because structural and payload atoms are commonly
-  adjacent. In the planned token projection, all ordinary `Text` uses the
-  specials-disabled encoder; registered IDs enter only through `Control` or
-  typed media processing (D4).
-- The implemented reverse direction is the experimental streaming text parser.
-  `TextLexer` lifts generated text into shared lexemes, and one strict output
-  machine exposes provisional deltas and completed typed messages. A token
-  lexer, reference tool/reasoning parsers, and engine adapters are planned
-  consumers of this boundary (D5). Failures stop the parser; consumers own
-  recovery. Full transcript lifting is optional, and the checker stays
-  model-only.
+| Package | Responsibility |
+|---|---|
+| `model/` | Immutable typed messages, system prompts, conversations, normalization |
+| `checker/` | Conversation-level conformance reports and rule metadata |
+| `core/` | Wire atoms, renderer, text lexer, output state machine |
+| `parsing/` | Public `StreamParser`, message construction, queues, lifecycle |
+| `formats/` | Native JSON and OpenAI message adapters |
 
-### 1.2 Layering
+Dependencies point downward: `formats` uses `checker`, `model`, and errors;
+`parsing` uses `core`, `model`, and errors; `checker` and `core` use `model`;
+`model` uses Pydantic. Core loops use plain dataclasses and Python values.
+Pydantic validates public data at construction and once per completed parsed
+message, not per lexeme.
 
-Dependencies point strictly downward; no cycles, no upward imports:
+Public names are explicitly exported in package `__all__` lists and recursively
+re-exported up to `apertus_common`. Implementation modules are private.
+[Development conventions](../DEVELOPMENT.md#module-and-api-conventions) describe
+how to maintain those boundaries.
 
+## Typed model
+
+`Conversation` contains an optional `SystemPrompt` and ordered `items`:
+
+- Inputs: `Harness`, `ToolResult`, `Retrieval`, `Event`, `Attachment`, `User`,
+  `Document`, and `GenericInput`.
+- Outputs: `Assistant`, `Think`, `ToolCall`, `VerifiableAnswer`, and
+  `GenericOutput`.
+- `Wait`, a separate marker for the model's deliberate stop.
+
+Pydantic models and nested sequence/mapping containers are immutable.
+Serialization restores exact message classes using `(direction, type)`
+discrimination; unknown types select the generic model for their direction.
+`Conversation.model_json_schema()` describes native conversation JSON.
+
+`User` and `Attachment` carry immutable sequences of `TextPart`; a bare string
+coerces to one text part. Text attachments remain supported. Other message
+payloads are strings, except `ToolCall`, which has typed `id`, `name`, and
+finite JSON `args` fields. Image and audio parts are not supported.
+
+Headers have typed known fields and an open `extras` mapping. Keys and values
+are validated eagerly; values cannot contain whitespace, `=`, `<|`, or `|>`.
+Tool-call IDs accept `[A-Za-z0-9_:.-]{1,64}`;
+`is_canonical_id()` checks the pilot's `NAME:COUNTER` convention.
+
+Order and authority are metadata exposed through `type_info()`, never wire
+fields. Unknown inputs use order 3 and authority 4. `Conversation.normalized()`
+stably sorts each consecutive input run by delivery order; outputs and waits
+never move. Direct model construction and rendering preserve observed order.
+
+## Conformance checker
+
+Model validation rejects structurally invalid values. Cross-message violations
+remain representable, and `check(conversation)` reports them without modifying
+the conversation or raising for violations.
+
+Seven checker families cover system prompts, input order, tool calls, tool
+results, IDs, waits, and verifiable answers. Rules have stable IDs,
+descriptions, and error/warning severities. `rule_table()` exposes the inventory;
+`default_checkers()` returns the default checker instances.
+
+A `ConformanceReport` contains typed violations with locations, exposes `ok`,
+`errors`, and `warnings`, and can be serialized with `dataclasses.asdict()`.
+`checkers=` replaces the default checker set; subclass `Checker` to extend it.
+Severity overrides are accepted per checker, per rule, and per call. Duplicate
+rule IDs across checker types and unknown override IDs are rejected.
+
+Tool argument validation uses `jsonschema`, respects an explicit `$schema`,
+and defaults to Draft 2020-12. It never retrieves remote schema references.
+Noncanonical IDs, open calls at transcript end, verifiable-answer placement
+and cardinality, and an unterminated output run are advisory warnings.
+
+## Wire IR and string rendering
+
+Only the renderer authors framing. It walks the typed conversation into
+`Control(token)` and `Text(text, trust)` atoms. Text provenance is `structural`
+for renderer-authored syntax and `payload` for content. Separate adjacent text
+parts remain separate atoms; string projection concatenates them directly.
+
+`render_str()` emits control glyphs and verbatim text without escaping:
+
+```text
+<|in|> type=user <|hdr|> Hello <|/in|>
+
+<|out|> type=assistant <|hdr|> Hi <|/out|>
+<|wait|>
 ```
-formats/     -> checker/, model/, errors.py
-parsing/     -> core/, model/, errors.py
-checker/     -> model/
-core/        -> model/
-model/       -> pydantic
-```
 
-`core/` contains the wire IR, renderer, text lexer, and output state machine.
-Its incremental loops use plain slotted dataclasses and tuples; Pydantic runs
-when constructing public models, reading formats, and closing a parsed output
-message (D1). The planned tokenizer binding must preserve these dependency
-directions.
+The implemented pilot inventory is `<|sys|>`, `<|/sys|>`, `<|in|>`, `<|/in|>`,
+`<|out|>`, `<|/out|>`, `<|hdr|>`, `<|wait|>`, and `<|pad|>`. Padding is recognized
+by the lexer but not emitted by the renderer or accepted by the output parser.
+Former media glyphs such as `<|image|>` and `<|audio|>` are ordinary text with
+no media semantics.
 
-### 1.3 Package layout
+Headers render `type` first, then typed keys, then extras in insertion order.
+Messages have one structural space between framing elements; an empty payload
+uses one space between header terminator and closing token. Messages are
+separated by a blank line. A wait occupies its own line attached to the prior
+block. There is no leading or trailing newline.
 
-```
-src/apertus_common/
-  model/        # messages, headers, system prompt, conversation
-  checker/      # conversation-level conformance rules and check()
-  core/         # wire IR, renderer, text lexer, output machine
-  parsing/      # experimental public streaming text parser
-  formats/      # native JSON and OpenAI request mapping
-tests/
-  test_*.py     # model, checker, formats, renderer, and parser tests
+The system prompt uses the pilot's `<|sys|>` envelope and XML-like tags in
+order: identity, behavior, required effort, tools, extra tags, environment.
+Absent optional tags are omitted. Tool schemas and call payloads use compact
+JSON with Unicode preserved; a call payload is exactly `{"name":...,"args":...}`.
 
-planned:
-  tokenizer/          # artifact binding and token-ID frontend
-  tests/golden/       # exact token IDs and parser results
-  tests/equivalence/  # optional Jinja diagnostics
-```
+The string codec is ambiguous when ordinary content spells control glyphs or
+system-tag delimiters. Its round-trip guarantees cover only unambiguous text;
+rendered text is not an untrusted transport format. There is no token encoder
+or full-transcript decoder in the current public API.
 
-### 1.4 Public and planned top-level API
+## Native JSON and OpenAI message formats
 
-The package namespace is the API; internals stay private (see
-[CONVENTIONS.md](../CONVENTIONS.md)). The representative block below labels
-planned entries explicitly:
+The `apertus_common.formats` boundary converts external data to and from the
+typed `Conversation` model. It does not render Apertus wire framing. Import all
+public functions from `apertus_common`:
 
 ```python
 from apertus_common import (
-    # model
-    Conversation, SystemPrompt,  # + the concrete message cast
-    # implemented codec
-    render_str,              # Conversation -> string form
-    # checker
-    check,                   # Conversation -> ConformanceReport
-    # streaming
-    StreamParser,            # experimental strict output-only text parsing
-    # implemented formats
-    from_json, to_json,      # the model's own JSON under harmony-style names,
-                             # ingest flags normalize / check / strict
-    from_openai, to_openai,  # OpenAI chat-completions mapping, lossy, stated subset
-    ConformanceError,        # raised by strict=True (carries the report)
+    AdapterError,
+    ConformanceError,
+    from_json,
+    from_openai,
+    to_json,
+    to_openai,
 )
-
-# Planned after tokenizer integration:
-# from apertus_common import encode
 ```
 
-Optional extensions are scoped in [SPEC.md §5](../SPEC.md#5-optional-later-extensions).
-Parser-specific variants are detailed in [parsing.md](parsing.md).
+| Format | Read | Write | Contract |
+|---|---|---|---|
+| Native model JSON | `from_json` | `to_json` | Lossless with `normalize=False`; normalizes by default |
+| OpenAI chat completions | `from_openai` | `to_openai` | Compatibility adapter with a stated lossy subset |
 
-The formats boundary is complete. Native JSON uses `from_json` and `to_json`;
-OpenAI chat-completions conversion uses `from_openai` and `to_openai`; all four
-are exported at the package root. Format lifts construct the typed model before
-the core renderer or checker runs, so external representations never author
-wire framing directly. Dataset files use the JSON-lines convention from D18.
+### Shared ingest controls
 
-## 2. Design decisions
+Both read functions construct and validate a `Conversation`, then apply the
+same keyword controls:
 
-**D1: Pydantic at the boundary, plain objects in the core.** The typed model
-is Pydantic v2: validation, schema export, serialization for free. The core
-never runs Pydantic validation per token or wire atom; Model-to-wire
-converts once, then everything is plain data.
+```python
+normalize: bool = True
+check: bool = False
+strict: bool = False
+```
 
-**D2: The wire IR is the single source of framing truth.** Only the
-renderer produces framing (mechanics in 1.1); any spec change to the wire
-form lands in one file.
+| Controls | Result |
+|---|---|
+| defaults | Normalize canonical input order and return `Conversation` |
+| `normalize=False` | Preserve observed order |
+| `check=True` | Return `(conversation, ConformanceReport)` |
+| `strict=True` | Raise `ConformanceError` when the report has errors; warnings pass |
+| `check=True, strict=True` | Raise on errors, otherwise return the conversation and report |
 
-**D3: The string form is a library-defined codec, not a template.**
-Control tokens appear as their surface glyphs; payload text renders
-verbatim (O1 interim: no escaping, no content validation). A payload that
-itself contains a control glyph therefore renders ambiguously in the
-string projection. The planned token path avoids this ambiguity by encoding
-payloads with special-token recognition disabled (D4) and is intended to be
-the fully faithful wire serialization.
-Accordingly, string parsing (the streaming output parser now, the
-optional `parse_str` later) is a partial inverse until escaping exists:
-its contract excludes ordinary content containing control glyphs or
-ambiguous system-tag delimiters. Such input may parse as different
-structure and must not be treated as an untrusted transport format.
-Deferred, string path only: optional content validation by exact string
-match against the artifact's special-token inventory, and, if
-losslessness is later required, the escaping rule (in payloads,
-`<(\*)\|` gains one backslash on render and loses one on parse).
-The planned String-to-Tokens path must **not** tokenize with specials enabled.
-For input in the unambiguous subset, it will lift the string back to wire atoms
-and encode ordinary text specials-disabled. Untrusted or ambiguous strings are
-outside this path's contract; the typed-model and future token-ID paths retain
-the format's full unforgeability guarantee until escaping exists.
+Normalization runs before checking. Use `normalize=False, check=True` to audit
+the source as received. Local model validation always happens first and is not
+converted into a conformance finding.
 
-**D4: Planned token projection uses two disjoint paths.** Every special ID will
-be placed by code walking validated typed structure; every byte of text will go
-through one encoder that cannot produce special IDs. Concretely: framing
-IDs will come from an explicit `ControlTokens` name-to-ID map and be appended
-directly, never tokenized; every ordinary `Text` run will be encoded with
-special-token recognition disabled (the tokenizer's
-`encode_special_tokens` switch), so a payload spelling a control glyph yields
-inert ordinary tokens; media placeholder and expansion IDs will be emitted from
-typed parts and processor output, never from text. The tokenizer binding will
-expose exactly one text encoder, hardwired to specials-disabled; no API will
-encode ordinary text any other way. The typed part list is the trust boundary
-for media.
+```python
+conversation, report = from_json(text, normalize=False, check=True)
 
-Coalescing will be a token-projection operation, not an IR normalization step.
-Encoding adjacent pieces separately can change BPE token ids, while physically
-merging wire atoms would discard useful provenance and future source mapping.
-When optional token metadata such as loss masks lands, the internal atoms may
-gain compact message ownership and semantic-region labels. Recipe-specific
-mask values remain derived output and must not affect coalescing or token ids.
+try:
+    conversation = from_openai(messages, normalize=False, strict=True)
+except ConformanceError as error:
+    print(error.report.errors)
+```
 
-**D5: One strict output parser core, streaming-first.** The implemented text
-frontend produces source-neutral lexemes for one output state machine. The
-planned token frontend will target the same boundary. Batch parsing is the
-completed form of the text path. The machine reports the first failure and
-becomes terminal; consumers alone choose recovery. This keeps parsing separate
-from model-only conformance checking and leaves full transcript lifting as a
-separate optional consumer. The experimental interface, grammar, state, queue,
-lifecycle, and failure contracts are defined in [parsing.md](parsing.md).
+### Native JSON
 
-**D6: One fully supported form, explicit conversions for the rest
-(implemented).** Native model JSON is the canonical serialization. `formats/`
-provides plain
-`from_json`/`to_json` and `from_openai`/`to_openai` functions, with no protocol,
-registry, or file helpers. Shared ingest flags compose normalization and
-conformance reporting as described in D9. Unsupported outbound mappings raise
-instead of being dropped or relabelled. Dataset framing remains a convention
-(D18). The planned OpenAI response side belongs in a serving adapter over
-`StreamParser`; it is not implemented by `to_openai`. Exact public adapter
-guarantees are owned by SPEC.md §3.4 and the function documentation.
-The complete public interface and conversion tables are in
-[formats.md](formats.md).
+```python
+from_json(
+    text: str | bytes,
+    *,
+    normalize: bool = True,
+    check: bool = False,
+    strict: bool = False,
+) -> Conversation | tuple[Conversation, ConformanceReport]
 
-**D7: Structured errors.** Each boundary reports stable typed failures with
-locations and chained causes where applicable. Parsing owns its exception
-hierarchy and caller-misuse error, defined in [parsing.md](parsing.md). Formats
-use focused adapter errors, strict ingest carries a conformance report, and
-the checker returns typed violations instead of a bare boolean. Consumers do
-not need to match human-readable error strings.
+to_json(conversation: Conversation) -> str
+```
 
-**D8: Optional Jinja equivalence remains outside the runtime.** A later
-test-only suite may render the same conversations via the library and a Jinja
-template, compare token-for-token on the representable subset, and keep an
-explicit exclusion list. The tokenizer may also ship a raising stub directing
-users to this library. Neither is part of the core completion contract. *Open:
-O2.*
+Native JSON is exactly the typed model serialization. It preserves concrete
+message classes and is described by `Conversation.model_json_schema()`.
 
-**D9: Two read modes: normalize on ingest, report on conformance.** Every
-cross-message rule has one definition (`TypeInfo` in the model layer) and
-two consumers with opposite behavior. The **ingest path** (authoring,
-lifting external formats) corrects: `Conversation.normalized()` sorts input
-runs into canonical order, and `formats` lift normalizes by default. The
-**conformance path** (`check()` over a directly constructed or successfully
-parsed `Conversation`) reports: the checker emits an ordering violation and
-never silently reorders. A read-and-fix pipeline is the composition:
-obtain a `Conversation` (constructed, format-lifted, or via the optional
-transcript parser), `check()` it, then `normalized()` when the caller
-explicitly accepts correction; the ingest flags of `from_json`/`from_openai`
-(`normalize`, `check`, `strict`) are that composition in one call (D6).
+```python
+from apertus_common import Conversation, User, from_json, to_json
 
-Decisions specific to the typed model (implemented):
+source = Conversation(items=[User(payload="hello")])
+text = to_json(source)
+restored = from_json(text, normalize=False)
+assert restored == source
+```
 
-**D10: Labels as metadata.** Delivery order and authority rank are
-`ClassVar`s exposed via the `TypeInfo` registry, never serialized (spec §5:
-not fields in the message); `direction` and `type` *are* fields carried by the
-wire form. Unranked input types default to order 3, authority 4.
-Rank is semantic metadata, not an encoding switch. The planned token projection
-will encode all payload text with special-token recognition disabled (D4).
+`from_json` raises Pydantic `ValidationError` for malformed JSON or invalid
+model fields. `to_json` performs no normalization or checking.
 
-**D11: Payloads.** `User`/`Attachment` take part lists
-(`TextPart | ImagePart | AudioPart`; a bare `str` coerces); media parts hold
-opaque handles, expansion is the processor's job. `ToolCall` is typed fields
-(`id`, `name`, `args`: any finite JSON value); the wire JSON of spec §6 is
-produced by the codec layer. Everything else is `str`.
+#### JSON-lines datasets
 
-**D12: Headers.** Typed known keys plus an open `extras` mapping;
-conservative value grammar (including a `<|`/`|>` glyph guard);
-non-conforming values are rejected, never escaped, until O6 settles.
+A dataset is one native conversation JSON value per line. There is no separate
+file-format object or loader:
 
-**D13: Ids.** Permissive `ToolCallId` (`[A-Za-z0-9_:.-]{1,64}`) plus
-`is_canonical_id()` for the `NAME:COUNTER` convention, pending O5.
+```python
+with open("conversations.jsonl", encoding="utf-8") as source:
+    conversations = (from_json(line) for line in source)
 
-**D14: Local vs. global validation.** The model validates fields and grammar
-eagerly; cross-message rules such as canonical order, id echo, and wait
-placement belong to the checker, so non-conformant conversations stay
-representable (D5, D9). Memory policy is outside this library.
+with open("out.jsonl", "w", encoding="utf-8") as sink:
+    sink.writelines(to_json(conversation) + "\n" for conversation in conversations)
+```
 
-**D15: Normalization lives on the model.** `Conversation.normalized()` is
-the correcting half of D9: each maximal run of consecutive input messages is
-stably sorted by `TypeInfo` order (unlabeled types key at position 3);
-outputs and waits never move; idempotent; never applied implicitly by
-validation or parsing.
+The caller owns file concerns such as line numbers, blank-line policy, skipping
+bad records, and dataset metadata.
 
-**D16: Conversation-level checkers, one class per spec rule family.** The
-conformance checker is a set of rule-family classes over the typed
-`Conversation` in `checker/rules/`, one module per family, each module
-docstring stating the rule it implements in its own words (code stays
-self-contained and independent of spec numbering; the spec mapping lives
-in this document). `check()` runs a strict
-default set and returns a `ConformanceReport` (D7); it reports, never
-raises (D9/D14). Extension is subclassing `Checker` and passing instances;
-`checkers=` replaces the set (extend with `[*default_checkers(), mine]`);
-no registry, no entry points. Every rule is declared as data (`Rule`: id,
-description, and default severity), so `rule_table()` yields the
-machine-readable rule inventory. **Rule ids are the stable contract;
-checker class granularity may be reorganized.** The `family/` prefix is
-the id namespace: builtin families are reserved, third parties pick a
-distinct family, and `check()` rejects an id declared by two checker
-types. Severities are error (breaking) or warning (non-breaking): strict
-by default, loosenable per checker (`severity=`), per rule (constructor
-`overrides=`), or per call (`check(..., overrides=)`). Warning defaults
-identify advisory or unsettled rules: the id convention
-(O5), open calls at the end of a transcript, verifiable-answer placement
-and cardinality, and an unterminated trailing output run. `jsonschema` is
-a runtime dependency for args-vs-schema checking; the declared schema
-dialect is unspecified upstream, so an explicit `$schema` is respected
-and the default is Draft 2020-12 (candidate to raise upstream); schema
-evaluation never retrieves remote references. Division of labor with
-parsing: framing and payload syntax live in the parsing layer (the streaming
-parser stops and raises a structured exception); `check` owns semantic and cross-message conformance over
-a complete typed model. The public checker does not accept raw strings
-or partial parse results.
+### OpenAI messages into the model
 
-**D17: Canonical string rendering conventions.** The spec declares glyphs
-and spacing non-normative, so the library's conventions are the reference
-rendering, fixed from the spec's worked examples: message form
-`<|in|> HEADER <|hdr|> PAYLOAD <|/in|>` (same with out) with exactly one
-space between elements, an empty payload collapsing to a single space;
-headers as space-separated `key=value` with `type` first, then the typed
-keys in field order, then extras in insertion order; messages separated by
-one blank line; `<|wait|>` on its own line attached to the preceding block
-(a conversation-initial wait stands alone; placement conformance is the
-checker's concern); no leading or trailing newline. The system prompt renders compact: one tag
-per line, absent optional tags omitted, tag order identity, behavior,
-effort, tools, extra tags, environment last; `<tool>` entries nested at
-2/4-space indent with compact JSON schemas. Tool call payloads render as
-compact JSON `{"name":...,"args":...}` with unicode preserved. Payload
-part lists concatenate with no injected separators; media parts render as
-their placeholder glyphs, expansion stays with the processor. Padding and
-generation prefixes are later concerns.
+```python
+from_openai(
+    messages,
+    tools=None,
+    *,
+    effort="medium",
+    continue_final_message=False,
+    normalize=True,
+    check=False,
+    strict=False,
+) -> Conversation | tuple[Conversation, ConformanceReport]
+```
 
-**D18: Datasets are JSON lines of the typed model, by convention
-(implemented).** One `Conversation` JSON per line (`to_json`, i.e.
-`model_dump_json()`;
-`system` null for pretraining data), so a corpus is lossless by
-construction, its line schema is `Conversation.model_json_schema()`
-(external tools validate without the library), and it is versioned by the
-library release that owns that schema. No per-line envelope, version key,
-or dataset metadata (a pipeline wraps and unwraps its own), and no library
-helper: reading is `from_json` per line, with the ingest flags; writing is
-`to_json` plus a newline. Lines written this way round-trip byte for byte
-through `from_json(normalize=False)`, and through the default when their
-input order is already canonical. Authoring conveniences are not part of
-the convention (closes O4).
+Pass the request's `reasoning_effort` as `effort`. A `SystemPrompt` is always
+created because Apertus requires effort.
+
+| OpenAI input | Apertus model |
+|---|---|
+| Leading `system` or `developer` | `SystemPrompt.behavior` |
+| Later `system` or `developer` | `Harness` |
+| `user` text | `User` with `TextPart` |
+| `user` `text` parts | `TextPart` |
+| Assistant `reasoning_content` | `Think` |
+| Assistant `content` | `Assistant` |
+| Assistant `tool_calls` | `ToolCall`; ids are preserved and JSON arguments are parsed |
+| `tool` | `ToolResult` using `tool_call_id` |
+| Function tools | `ToolSpec`; parameters become the schema and description becomes policy |
+
+Each assistant run is closed with `Wait`. Set
+`continue_final_message=True` to leave only the trailing run open for assistant
+prefill. An open run is representable and normally produces a checker warning.
+
+Missing or empty tool arguments become `{}`; mapping arguments are accepted as
+already parsed values. Missing tool parameters default to an object schema. An
+assistant with no reasoning, content, or calls becomes an empty `Assistant`.
+System, assistant, and tool content supplied as text-part lists is concatenated.
+
+The adapter ignores OpenAI `name` fields and unknown keys. Only text content
+parts are supported; other content parts raise `AdapterError`. Default
+normalization can move a later system
+notice, represented as `Harness`, ahead of user or tool inputs at the same
+boundary. Use `normalize=False` when arrival order must be preserved.
+Unsupported roles, malformed tool calls, and unsupported content-part shapes
+raise `AdapterError`.
+
+```python
+request = {
+    "messages": [
+        {"role": "system", "content": "Be brief."},
+        {"role": "user", "content": "Hello"},
+        {"role": "assistant", "content": "Hi"},
+    ]
+}
+
+conversation, report = from_openai(
+    request["messages"],
+    effort="high",
+    check=True,
+)
+```
+
+### Model into OpenAI messages
+
+```python
+to_openai(conversation: Conversation) -> dict[str, Any]
+```
+
+The result always contains `messages`. It also contains `tools` when declared
+and `reasoning_effort` when the conversation has a system prompt.
+
+| Apertus model | OpenAI output |
+|---|---|
+| `SystemPrompt` identity, behavior, environment | One `system` string joined with blank lines |
+| `SystemPrompt.tools` | Function tools |
+| `Harness` | `system` |
+| `User` | `user`, as text or text parts |
+| `ToolResult` | `tool` |
+| `Think` | Assistant `reasoning_content` |
+| `Assistant` | Assistant `content` |
+| `ToolCall` | Assistant `tool_calls` with compact JSON arguments |
+| `Wait` | Flush the current assistant message |
+
+One OpenAI assistant message can contain one reasoning segment, one content
+segment, then any number of tool calls. A repeated segment or a different
+order starts another assistant message. This preserves reasoning separately
+from content.
+
+The following values have no OpenAI counterpart and raise `AdapterError`
+instead of being dropped or relabelled:
+
+- `Retrieval`, `Event`, `Attachment`, `Document`
+- `GenericInput`, `GenericOutput`, `VerifiableAnswer`
+- non-empty message header `extras`
+- system prompt `extra_tags`
+
+The adapter preserves the supported message content, but normalizes its
+representation: singleton user text-part lists become strings; adjacent
+assistant messages may merge; empty reasoning/content segments may be omitted; `developer` returns as `system`; assistant `content` is always
+present and may be `None`; tool arguments are re-serialized compactly; system
+identity, behavior, and environment lose their tag boundaries; ignored OpenAI
+keys do not return.
+
+```python
+openai_request = to_openai(conversation)
+messages = openai_request["messages"]
+```
+
+### Errors
+
+| Operation | Error | Inspection |
+|---|---|---|
+| `from_json` | Pydantic `ValidationError` | Standard Pydantic locations and messages |
+| Either read with `strict=True` | `ConformanceError` | `error.report` |
+| `from_openai` mapping failure | `AdapterError` | `where="message"`, message `index`, `reason`, optional `__cause__` |
+| Invalid OpenAI effort or tools | `AdapterError` | `where="system"`, `index=-1` |
+| `to_openai` unsupported item | `AdapterError` | `where="item"`, item `index`, `reason` |
+| `to_openai` unsupported system data | `AdapterError` | `where="system"`, `index=-1` |
+
+Adapters stop at the first error. Skipping, repairing, or collecting bad
+records is caller policy.
+
+For executable dataset and conversion workflows, see
+[the dataset notebook](../examples/dataset_examples.ipynb).
+
+## Streaming output parser
+
+`StreamParser` is an experimental, strict text parser for one contiguous
+model-output segment. It returns provisional payload deltas and completed
+validated output messages. It does not parse full transcripts or token IDs.
+`check()` accepts only a constructed `Conversation`, not partial parser state.
+
+### Public interface
+
+```python
+from apertus_common import StreamParseError, StreamParser
+
+parser = StreamParser()
+try:
+    for chunk in engine_stream():       # arbitrary text chunk sizes
+        parser.push(chunk)               # returns None
+        for delta in parser.take_deltas():
+            route_provisional(delta)
+        for message in parser.take_completed():
+            route_committed(message)
+        parser.current_type              # open output type, or None
+        parser.current_headers           # immutable parsed header mapping
+        parser.current_payload           # accumulated open payload
+        parser.waiting                   # wait token accepted
+    parser.finish()
+except StreamParseError as error:
+    assert error.parser is parser
+    handle_failure(error.parser, error)   # consumer policy
+
+try:
+    parsed = StreamParser.parse(text)     # fresh parser: push once, finish
+except StreamParseError as error:
+    inspect_partial(error.parser)         # terminal batch parser remains available
+else:
+    parsed.messages                       # cumulative completed messages
+```
+
+`PayloadDelta` is a frozen slotted dataclass:
+
+```python
+@dataclass(frozen=True, slots=True)
+class PayloadDelta:
+    ordinal: int
+    type: str
+    text: str
+```
+
+- `push(chunk) -> None` accepts any non-empty or empty `str` chunk. A chunk may
+  cross payload, message, and wait boundaries.
+- `take_deltas()` drains provisional `PayloadDelta` records in source order.
+  Each record identifies its output message, so one push can safely cross
+  several output types.
+- `take_completed()` drains newly completed typed messages. `messages` remains
+  cumulative for the parser's lifetime; draining does not remove history.
+- `current_type`, `current_headers`, and `current_payload` describe only the
+  currently open output message. They are `None`, an empty mapping, and `None`
+  respectively when no message is open.
+- A delta is provisional until its message closes and validates. Consumers may
+  stream provisional data when their interface permits retraction or may wait
+  for `take_completed()` when malformed output must never become visible.
+- The parser exposes state for consumers to route messages and select their
+  own failure policy. It does not execute tools or assemble conversations.
+
+### Scope and lifecycle
+
+`StreamParser` parses output framing only. It does not parse system prompts,
+input messages, prefill text, or complete conversations.
+
+A parser handles one contiguous engine-output segment. Its accepted forms are:
+
+```text
+OUTPUT_MESSAGE ("\n\n" OUTPUT_MESSAGE)* ["\n" WAIT]
+WAIT
+```
+
+An empty segment and a segment ending at a clean message boundary are
+syntactically complete when `finish()` is called, with `waiting == False`.
+Whether such an engine stop is abnormal is consumer policy. A bare wait is
+valid because memory stripping can leave a wait-only burst.
+
+- Accepting `<|wait|>` sets `waiting` and makes the parser terminal.
+- `finish()` at a clean boundary succeeds and makes the parser terminal.
+- `finish()` inside a control-token prefix, header, payload, or separator
+  raises `IncompleteMessageError` and makes the parser terminal.
+- Any parsing failure makes the parser terminal.
+- `push()` after a successful finish, and a second `finish()`, raise
+  `ParserStateError`. This is caller misuse, not malformed model output.
+- A failed parser cannot be reset or resumed. Recovery always uses a new
+  `StreamParser` selected and driven by the consumer.
+- If a harness splices input between model outputs, each contiguous engine
+  output segment uses a new parser. Conversation assembly belongs to the
+  harness.
+
+### Strict canonical string grammar
+
+The current text parser accepts exactly the string form emitted by
+`render_str()` for output messages. It does not normalize whitespace.
+
+```text
+OUTPUT_MESSAGE := "<|out|>" HEADER "<|hdr|>" BODY "<|/out|>"
+HEADER         := SP "type=" VALUE *(SP KEY "=" VALUE) SP
+BODY           := SP                          ; empty payload
+                | SP PAYLOAD SP               ; non-empty payload
+KEY            := [A-Za-z0-9_]+
+SP             := one ASCII space
+```
+
+- `type` is first and appears exactly once.
+- Header fields have exactly one ASCII space between them.
+- The parser consumes exactly one structural space after `<|hdr|>`.
+- For a non-empty payload, it removes exactly one structural space before
+  `<|/out|>` and preserves every additional leading or trailing payload space.
+- The single space between `<|hdr|>` and `<|/out|>` represents an empty
+  payload.
+- Output messages are separated by exactly one blank line (`"\n\n"`).
+- A final wait is attached to the preceding message with exactly one newline.
+- Any content after a wait is a framing failure.
+- Full control glyphs in payload text are structural in the partial string
+  codec. An unexpected glyph therefore fails parsing. Payloads that spell
+  control glyphs remain outside the string codec's unambiguous subset.
+
+The machine keeps one candidate payload character until it sees the next
+lexeme. At a close token, that character must be the structural trailing
+space and is discarded. Otherwise it is emitted as payload. This preserves
+payload whitespace without using `strip()` and makes chunk splitting
+irrelevant.
+
+### Header and message construction
+
+Header parsing enforces the model's existing key and value grammars before
+building a message:
+
+- header keys match `[A-Za-z0-9_]+`;
+- values are non-empty Unicode scalar strings containing no whitespace, `=`,
+  `<|`, or `|>`;
+- duplicate keys are rejected;
+- `direction` is forbidden because `<|out|>` supplies it;
+- known typed headers follow `type` before extras;
+- `tool_call` requires exactly one `id` immediately after `type`;
+- extras retain observed insertion order.
+
+After the header terminator, `current_type` and an immutable
+`current_headers` mapping are available. At message close, a cached explicit
+dispatch performs exactly one Pydantic validation:
+
+```python
+_OUTPUT_TYPES = {
+    "assistant": Assistant,
+    "think": Think,
+    "tool_call": ToolCall,
+    "verifiable_answer": VerifiableAnswer,
+}
+```
+
+Unknown output types use `GenericOutput`.
+
+#### Tool-call payloads
+
+A tool-call payload accepts semantically valid JSON rather than requiring the
+exact compact byte spelling produced by `render_str()`:
+
+- the top level is an object containing exactly `name` and `args`;
+- top-level key order and insignificant JSON whitespace may vary;
+- duplicate object keys are rejected at every nesting level;
+- `NaN`, `Infinity`, and `-Infinity` are rejected;
+- `name`, `args`, and the header `id` pass through `ToolCall` validation.
+
+Invalid JSON or top-level structure raises `MessageValidationError` with
+reason `INVALID_TOOL_PAYLOAD`. Other Pydantic failures use
+`MESSAGE_VALIDATION`. No partial or invalid `ToolCall` enters `messages` or
+the completed queue.
+
+### Failure contract
+
+The parser reports failures but never recovers from them:
+
+```text
+ApertusFormatError
+└── StreamParseError
+    ├── FramingError
+    │   └── IncompleteMessageError
+    └── MessageValidationError
+
+ParserStateError(RuntimeError)
+```
+
+Every `StreamParseError` exposes:
+
+```python
+error.reason              # stable ParseFailure enum
+error.parser              # exact terminal StreamParser that raised
+error.offset              # absolute character offset in text mode
+error.message_ordinal     # zero-based output-message position
+error.state               # state at failure
+error.raw_text            # complete uncommitted frame or fragment
+error.unconsumed          # suffix beginning at the rejected source unit
+error.__cause__           # JSON/Pydantic cause, when applicable
+```
+
+`error.parser` is the parser instance whose operation failed. In streaming
+use, it is identical to the caller-owned parser. In batch use,
+`StreamParser.parse(text)` creates the parser internally, so the exception is
+the caller's route to its retained messages, pending queues, current frame,
+and failure state. The reference is not a snapshot: the parser is already
+terminal and cannot be mutated by further parsing.
+
+The initial stable reasons are:
+
+```text
+UNEXPECTED_TEXT
+UNEXPECTED_CONTROL
+INVALID_SEPARATOR
+INVALID_HEADER
+DUPLICATE_HEADER
+MISSING_TYPE
+MISMATCHED_CLOSE
+INVALID_TOOL_PAYLOAD
+MESSAGE_VALIDATION
+TRAILING_AFTER_WAIT
+INCOMPLETE_CONTROL
+INCOMPLETE_HEADER
+INCOMPLETE_PAYLOAD
+INCOMPLETE_SEPARATOR
+```
+
+On failure, the parser:
+
+1. stops at the first rejected source unit;
+2. preserves completed messages and queued deltas produced before it;
+3. preserves the uncommitted raw fragment and unaccepted suffix;
+4. attaches itself to the public exception as `error.parser`;
+5. enters a permanent failed state;
+6. performs no lookahead for a recovery boundary and no raw-content fallback.
+
+The consumer may propagate the error, retain committed messages, use or
+discard provisional deltas, show raw output, or feed a chosen suffix to a new
+parser. Those actions are outside `StreamParser`.
+
+### Lexeme boundary
+
+The output machine consumes source-neutral lexemes from the text frontend:
+
+```python
+@dataclass(frozen=True, slots=True)
+class SourceSpan:
+    start: int
+    end: int
+    unit: Literal["character", "token"]
+
+@dataclass(frozen=True, slots=True)
+class TextLexeme:
+    text: str
+    span: SourceSpan
+
+@dataclass(frozen=True, slots=True)
+class ControlLexeme:
+    token: ControlToken
+    span: SourceSpan
+
+Lexeme = TextLexeme | ControlLexeme
+```
+
+Frontends implement one internal protocol:
+
+```python
+class Lexer[InputT](Protocol):
+    def push(self, value: InputT) -> Sequence[Lexeme]: ...
+    def finish(self) -> Sequence[Lexeme]: ...
+```
+
+```text
+TextLexer -> Lexeme stream -> OutputMachine -> StreamParser state
+```
+
+The facade retains the uncommitted raw source. The machine therefore uses
+source spans to report failures without storing source-specific values in
+each lexeme.
+
+#### Implemented text frontend
+
+The text lexer recognizes the complete library control-glyph inventory using
+one precompiled longest-first literal alternation. It emits maximal text runs
+and individual control lexemes with absolute character spans. Streaming keeps
+only the longest suffix that is a prefix of a control glyph, allowing glyphs
+to straddle arbitrary chunks without delaying unrelated text.
+
+Only `OUT`, `OUT_END`, `HDR`, and `WAIT` are legal to the output machine.
+System, input, and padding controls are recognized so they can produce a
+precise `UNEXPECTED_CONTROL` failure.
+
+### Internal architecture
+
+```text
+core/_lexeme.py       # source-neutral lexeme and span types
+core/_scan.py         # TextLexer with control-prefix holdback
+core/_machine.py      # strict output-only state machine
+parsing/_stream.py    # public facade, queues, builder, lifecycle
+```
+
+The machine states cover expecting output, header, payload, separator,
+waiting, finished, and failed. It mutates plain internal state and never runs
+Pydantic validation inside the lexeme loop. The facade builds one typed model
+at message close and owns cumulative and drainable state views.

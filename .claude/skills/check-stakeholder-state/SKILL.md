@@ -1,88 +1,60 @@
 ---
 name: check-stakeholder-state
-description: Check the Apertus 2 stakeholder sources, including the format spec repo (apertus-2-format-spec-proposal), the tokenizer repo (apertus-omni-tokenizer), and tracking issues swiss-ai/apertus-program#856/#765, for new commits, branches, PRs, and comments since the last check; summarize them with their implications for apertus-common and flag needed SPEC.md/AGENTS.md updates. Use when the user asks for stakeholder/upstream status, what changed in the spec or tokenizer, or before starting a new piece of implementation work.
+description: Check the Apertus format/profile and tokenizer repositories and swiss-ai/apertus-program issues 856 and 765 for upstream changes and their implications for apertus-common. Use for stakeholder status or upstream-change reviews; suggest updates to DEVELOPMENT.md, docs/design.md, README.md, or AGENTS.md without applying them.
 ---
 
 # check-stakeholder-state
 
-Report what changed upstream and what it means for this library. This skill is
-**report-only**: never edit SPEC.md, AGENTS.md, code, or the stakeholder repos
-as part of it; recommend edits instead (AGENTS.md convention: in case of
-deviations, inform the user).
+Report upstream changes and their implications. Do not edit project documents,
+code, or upstream working trees as part of this report. The only persistent
+output is the check baseline in this skill's `state.json`.
 
-## Sources
+## Sources and baseline
+
+Read `README.md`, `DEVELOPMENT.md`, `docs/design.md`, and `AGENTS.md` for source
+locations, development scope, and implemented behavior.
 
 | Source | Location | Watch for |
 |---|---|---|
-| Format spec | local `/Users/rkre/swissai_repos/apertus-2-format-spec-proposal`, remote [swiss-ai/apertus-2-format-spec-proposal](https://github.com/swiss-ai/apertus-2-format-spec-proposal) | commits on the current revision branch (`v1`, see AGENTS.md) and `main`, new `vN` revision branches, open/updated/merged PRs, `spec.md` diffs |
-| Tokenizer | local `/Users/rkre/swissai_repos/apertus-omni-tokenizer`, remote [swiss-ai/apertus-omni-tokenizer](https://github.com/swiss-ai/apertus-omni-tokenizer) | commits on the checked-out branch (see AGENTS.md; currently `v2-on-pr24`) and `main`, PRs, changes under `tokenizers/Apertus_2/`, `chat_templates/`, `omnitok/apertus.py` |
-| Tracking issues | [swiss-ai/apertus-program#856](https://github.com/swiss-ai/apertus-program/issues/856) and [#765](https://github.com/swiss-ai/apertus-program/issues/765) | new comments, state/milestone/assignee changes, newly cross-referenced issues or PRs |
+| Format and profile | `/Users/rkre/swissai_repos/apertus-2-format-spec-proposal`; [remote](https://github.com/swiss-ai/apertus-2-format-spec-proposal) | relevant revision/profile branches, `main`, PRs, `spec.md`, and `profile/apertus_2/` changes |
+| Tokenizer | `/Users/rkre/swissai_repos/apertus-omni-tokenizer`; [remote](https://github.com/swiss-ai/apertus-omni-tokenizer) | current and target branches, PRs, tokenizer artifacts and build recipes |
+| Tracking issues | [856](https://github.com/swiss-ai/apertus-program/issues/856), [765](https://github.com/swiss-ai/apertus-program/issues/765) | new comments, status changes, and linked issues or PRs |
 
-Baseline state lives in `.claude/skills/check-stakeholder-state/state.json`:
+Discover the relevant branches and artifact paths from the recorded references
+and local repositories. Do not assume an older branch or artifact path remains
+current. Keep the shared format and model profile on compatible revisions.
 
-```json
-{
-  "last_run": "ISO-8601 UTC",
-  "spec_repo":      {"branches": {"origin/v1": "sha", "origin/main": "sha"}, "remote_branches": ["..."]},
-  "tokenizer_repo": {"branches": {"origin/v2-on-pr24": "sha", "origin/main": "sha"}, "remote_branches": ["..."]},
-  "issues": {"856": {"comment_count": 0, "updated_at": "..."}, "765": {"comment_count": 0, "updated_at": "..."}}
-}
-```
+The baseline file is `.claude/skills/check-stakeholder-state/state.json`.
+Preserve its `last_run`, per-repository `branches` maps of refs to SHAs,
+`remote_branches` lists, and per-issue `comment_count` and `updated_at` fields.
+On the first run, compare upstream state with the project documents and record
+an initial baseline.
 
-On the first run (no state file) the baseline is what SPEC.md and AGENTS.md
-record: report the current upstream state against those documents, then write
-the state file.
+## Check
 
-## Steps
+1. Read the prior state and project documents.
+2. Fetch refs for both repositories without touching working trees. Never
+   pull, checkout, or reset; user work may be present.
+3. Compare tracked branch SHAs and remote branch lists with the baseline.
+   Read actual changes to the shared format and Apertus 2 profile, not just
+   commit titles. Record the revisions used.
+4. Inspect relevant PRs using `gh pr list` and `gh pr view`, filtering by the
+   prior check time when available.
+5. Read new issue comments and status changes with `gh issue view` for issues
+   856 and 765. Summarize decisions and open questions, not just titles.
+6. Classify effects on development scope, implemented contracts, tokenizer
+   compatibility, adapters, tests, and fixtures. Distinguish planned profile
+   alignment from newly introduced discrepancies.
+7. Report findings, then update the baseline only for successfully checked
+   sources, preserving prior state for sources that could not be checked.
 
-1. Read `state.json` (if present), plus SPEC.md and AGENTS.md for the recorded
-   assumptions (branch names, settled serving rules, tokenizer branch).
-2. Fetch, without touching working trees: `git fetch` only, never
-   pull/checkout/reset (the user may have work in progress there):
-   `git -C <local> fetch --all --prune` for both repos.
-3. Diff commits and branches: `git -C <local> log --oneline LAST_SHA..origin/BRANCH`
-   for each tracked branch (on first run: `git log --oneline -15 origin/BRANCH`);
-   compare `git branch -r` against the stored `remote_branches` to spot new
-   revision branches. For the spec repo, read the actual content change:
-   `git -C <local> diff LAST_SHA..origin/v1 -- spec.md`.
-4. PRs: `gh pr list --repo <owner/repo> --state all --limit 20 --json number,title,state,updatedAt,headRefName,baseRefName,url`
-   for both repos; keep those with `updatedAt > last_run`. Read the bodies of
-   relevant ones (`gh pr view N --repo ...`).
-5. Issues: for 856 and 765,
-   `gh issue view N --repo swiss-ai/apertus-program --json state,title,milestone,updatedAt,comments`
-   New comments are those beyond the stored `comment_count` (or after
-   `last_run`). Read the new comment bodies in full; summarize substance, not
-   titles.
-6. Classify every change by its effect on apertus-common:
-   - **Format change** (spec.md, revision branches): which SPEC.md §3/§4
-     requirement or encoder/parser/adapter behavior it touches; whether golden
-     files would change.
-   - **Tokenizer change** (artifact, recipe, chat templates): control-token
-     ids/vocabulary compatibility, whether the pinned branch in AGENTS.md/SPEC.md
-     is stale.
-   - **Decision/process change** (issue comments, PRs merged): scope changes
-     for SPEC.md, new settled rules, ownership/timeline updates.
-   - **No impact:** say so, don't pad.
-7. Deliver the report (format below).
-8. Update `state.json` with the new SHAs, branch lists, comment counts, and
-   `last_run` (`date -u +%Y-%m-%dT%H:%M:%SZ`).
+## Report
 
-## Report format
+Lead with a brief verdict. Link the relevant commits, PRs, or comments; explain
+which components are affected and suggest follow-ups. Scope and plans belong
+in `DEVELOPMENT.md`, implemented behavior in `docs/design.md`, overview and next
+tasks in `README.md`, and agent entry points in `AGENTS.md`.
 
-Lead with a one-line verdict (e.g. "2 upstream changes, 1 affects the encoder"
-or "No changes since <date>"). Then:
-
-- **What changed:** per source, only sources with changes; link commits/PRs/
-  comments.
-- **Implications for apertus-common:** concrete: which components, which
-  SPEC.md sections, whether golden files or the tokenizer pin are affected.
-- **Suggested follow-ups:** doc edits (SPEC.md/AGENTS.md), code work, or
-  questions to raise on #765/#856. Do not apply them.
-
-## Failure handling
-
-- `gh` unauthenticated or network down: report which sources were skipped and
-  what was checked locally; don't fail silently.
-- Local checkout's branch differs from what AGENTS.md records: flag it in the
-  report (docs or checkout is stale).
-- Never update `state.json` for a source that could not be checked.
+Report unavailable sources, network/authentication failures, and differences
+between documented targets and local checkouts. Use local evidence when
+necessary and make its freshness limitation explicit.

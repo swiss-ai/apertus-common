@@ -3,7 +3,6 @@
 from apertus_common import (
     Assistant,
     Attachment,
-    AudioPart,
     Conversation,
     Document,
     Effort,
@@ -11,7 +10,6 @@ from apertus_common import (
     GenericInput,
     GenericOutput,
     Harness,
-    ImagePart,
     Retrieval,
     SystemPrompt,
     TextPart,
@@ -51,8 +49,7 @@ def full_cast() -> Conversation:
             User(
                 payload=[
                     TextPart(text="What should I wear? "),
-                    ImagePart(ref="outfit.jpg", height=16, width=24),
-                    AudioPart(ref="clip.ogg"),
+                    TextPart(text="I have a light jacket."),
                 ]
             ),
             GenericInput(type="calendar_invite", payload="9:00", extras={"tz": "CET"}),

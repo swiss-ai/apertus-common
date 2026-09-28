@@ -174,9 +174,6 @@ def test_payload_scope_rejects_foreign_controls() -> None:
         "<|in|>",
         "<|/in|>",
         "<|pad|>",
-        "<|image|>",
-        "<|img_start|>",
-        "<|audio_end|>",
         "<|hdr|>",
         "<|out|>",
     ):
