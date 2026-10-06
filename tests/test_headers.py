@@ -1,43 +1,27 @@
-"""Header grammar: open vocabulary keys/values, collisions, error types."""
+"""Decoded header strings cannot contain whitespace; JSON escaping is supported."""
 
 import pytest
 from pydantic import ValidationError
 
-from apertus_common import ApertusFormatError, Harness, HeaderError, ToolResult
+from apertus_common import Call, Document, UnknownOutput
 
 
-def test_valid_extras() -> None:
-    message = Harness(payload="x", extras={"lang": "en", "V2": "yes_1"})
-    assert message.extras == {"lang": "en", "V2": "yes_1"}
-
-
-@pytest.mark.parametrize("key", ["a b", "", "k=v", "käse", "a|b", "a-b", "trailing\n"])
-def test_bad_keys_rejected(key: str) -> None:
+@pytest.mark.parametrize("value", ["a b", "a\tb", "a\nb", "a\u2003b", "\ud800"])
+def test_headers_reject_invalid_decoded_strings(value):
     with pytest.raises(ValidationError):
-        Harness(payload="x", extras={key: "v"})
-
-
-@pytest.mark.parametrize(
-    "value",
-    ["", "a b", "a=b", "a\tb", "a\nb", "<|hdr|>", "x|>y", "a<|b", "\ud800"],
-)
-def test_bad_values_rejected(value: str) -> None:
+        Call(name=value, counter=0, payload="")
     with pytest.raises(ValidationError):
-        Harness(payload="x", extras={"k": value})
-
-
-def test_extras_key_collisions() -> None:
+        Document(payload="", from_=value)
     with pytest.raises(ValidationError):
-        ToolResult(id="bash:1", payload="ok", extras={"id": "bash:2"})
-    for key in ("type", "direction"):
-        with pytest.raises(ValidationError):
-            Harness(payload="x", extras={key: "user"})
+        UnknownOutput(type="future", headers={"nested": [value]}, payload="")
 
 
-def test_error_hierarchy() -> None:
-    assert issubclass(HeaderError, ApertusFormatError)
-    assert issubclass(HeaderError, ValueError)
-    assert issubclass(ApertusFormatError, Exception)
-    # header violations surface through pydantic's ValidationError
+@pytest.mark.parametrize("value", ['a"b', "a=b", "a/b", "", "a\\b"])
+def test_header_strings_allow_json_escapable_nonwhitespace(value):
+    assert Call(name=value, counter=0, payload="").name == value
+
+
+@pytest.mark.parametrize("value", ["", "bad type", "type{", "type<|out|>"])
+def test_unknown_type_word_grammar(value):
     with pytest.raises(ValidationError):
-        Harness(payload="x", extras={"bad key": "v"})
+        UnknownOutput(type=value, payload="")

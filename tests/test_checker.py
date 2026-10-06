@@ -1,200 +1,110 @@
-"""Checker framework: report semantics, severity config, check()."""
+"""Checking remains explicit, immutable and separate from loading/parsing."""
 
-from collections.abc import Iterable
-from typing import ClassVar
+import subprocess
+import sys
 
 import pytest
 
-from apertus_common import (
+from apertus_common.checker import (
+    CheckContext,
     Checker,
-    ConformanceReport,
-    Conversation,
-    Harness,
+    CheckOptions,
+    ConformanceError,
     Location,
     Rule,
     Severity,
-    SystemPrompt,
-    ToolCall,
-    ToolSpec,
-    User,
-    Violation,
-    Wait,
-    check,
-    default_checkers,
+    checkers_for,
     rule_table,
 )
-from conftest import full_cast, pretraining
+from apertus_common.model import (
+    Call,
+    Conversation,
+    Document,
+    Reply,
+    SystemPrompt,
+    ToolSpec,
+)
 
 
-class _FlagChecker(Checker):
-    """Test-local family with one error rule and one warning rule."""
-
-    rules: ClassVar[tuple[Rule, ...]] = (
-        Rule("flag/hard", "always fires", Severity.ERROR),
-        Rule("flag/soft", "always fires", Severity.WARNING),
-    )
-
-    def check(self, conversation: Conversation) -> Iterable[Violation]:
-        yield self.violation("flag/hard", Location(item=0), "hard")
-        yield self.violation("flag/soft", Location(item=0), "soft")
-
-
-class _ConflictingChecker(Checker):
-    """Test-local checker that deliberately reuses another family's id."""
-
-    rules: ClassVar[tuple[Rule, ...]] = (
-        Rule("flag/hard", "conflicts with _FlagChecker", Severity.ERROR),
-    )
-
-    def check(self, conversation: Conversation) -> Iterable[Violation]:
-        return ()
-
-
-EXPECTED_RULE_SEVERITIES = {
-    "system/duplicate-tool-name": Severity.ERROR,
-    "input-order/canonical-order": Severity.ERROR,
-    "tool-call/undeclared-name": Severity.ERROR,
-    "tool-call/args-invalid": Severity.ERROR,
-    "tool-call/broken-schema": Severity.ERROR,
-    "tool-result/unknown-id": Severity.ERROR,
-    "tool-result/duplicate": Severity.ERROR,
-    "tool-result/open-call": Severity.WARNING,
-    "tool-call-id/non-canonical": Severity.WARNING,
-    "tool-call-id/name-mismatch": Severity.WARNING,
-    "tool-call-id/duplicate-counter": Severity.WARNING,
-    "tool-call-id/non-sequential": Severity.WARNING,
-    "wait/unterminated-transcript": Severity.WARNING,
-    "verifiable-answer/after-assistant": Severity.WARNING,
-    "verifiable-answer/multiple": Severity.WARNING,
-}
-
-
-def test_report_semantics() -> None:
-    error = Violation("flag/hard", Severity.ERROR, Location(item=0), "x")
-    warning = Violation("flag/soft", Severity.WARNING, Location(item=1), "y")
-    report = ConformanceReport(violations=(error, warning))
-    assert not report.ok
-    assert report.errors == (error,)
-    assert report.warnings == (warning,)
-    assert list(report) == [error, warning]
-    assert len(report) == 2
-    assert ConformanceReport(violations=(warning,)).ok
-
-
-def test_location_rendering() -> None:
-    assert str(Location(item=3)) == "items[3]"
-    assert str(Location(item=8, field="args")) == "items[8].args"
-    assert (
-        str(Location(scope="system", field="tools[1].json_schema"))
-        == "system.tools[1].json_schema"
-    )
-    assert str(Location(scope="system")) == "system"
-    assert str(Location(scope="stream")) == "stream"
-    with pytest.raises(ValueError):
-        Location(scope="system", item=0)
-    with pytest.raises(ValueError):
-        Location(item=-1)
-
-
-def test_severity_overrides() -> None:
-    conversation = Conversation(items=[User(payload="x")])
-    default = check(conversation, checkers=[_FlagChecker()])
-    assert {v.rule: v.severity for v in default} == {
-        "flag/hard": Severity.ERROR,
-        "flag/soft": Severity.WARNING,
-    }
-    configured = check(
-        conversation,
-        checkers=[
-            _FlagChecker(
-                severity=Severity.WARNING,
-                overrides={"flag/soft": Severity.ERROR},
+def system():
+    return SystemPrompt.build(
+        tools=[
+            ToolSpec(
+                name="weather", description="Weather", json_schema={"type": "object"}
             )
-        ],
+        ]
     )
-    assert {v.rule: v.severity for v in configured} == {
-        "flag/hard": Severity.WARNING,
-        "flag/soft": Severity.ERROR,
-    }
-    call_level = check(
-        conversation,
-        checkers=[_FlagChecker(severity=Severity.WARNING)],
-        overrides={"flag/soft": Severity.ERROR},
+
+
+def test_presets_and_replacement():
+    call = Call(name="weather", counter=-1, payload="bad JSON")
+    conv = Conversation(system=system(), items=[call])
+    assert {v.rule for v in conv.check("profile")} == {"profile/nonnegative-counter"}
+    assert "arguments/json" not in {v.rule for v in conv.check("conversation")}
+    assert "arguments/json" in {v.rule for v in conv.check("full")}
+    assert conv.check(checkers=[]).ok
+    assert len(checkers_for("profile")) < len(checkers_for("full"))
+    with pytest.raises(ValueError, match="unknown check mode"):
+        conv.check("typo")
+
+
+def test_checked_loading_and_builder_use_same_options():
+    options = CheckOptions(
+        mode="conversation", context=CheckContext(purpose="pretraining")
     )
-    assert not call_level.ok
-    assert call_level.errors[0].rule == "flag/soft"
+    conv = Conversation.builder().document("text").build(check=options)
+    assert Conversation.from_json(conv.to_json(), check=options) == conv
+    with pytest.raises(ConformanceError) as caught:
+        Conversation.from_json(conv.to_json(), check="full")
+    assert not caught.value.report.ok
 
 
-def test_invalid_checker_configuration_rejected() -> None:
-    with pytest.raises(ValueError):
-        Rule("Bad Rule", "invalid", Severity.ERROR)
-    with pytest.raises(ValueError):
-        Rule("flag/empty", "", Severity.ERROR)
-    with pytest.raises(ValueError):
-        _FlagChecker(overrides={"flag/missing": Severity.WARNING})
-    with pytest.raises(ValueError):
-        check(
-            Conversation(),
-            checkers=[_FlagChecker()],
-            overrides={"other/rule": Severity.WARNING},
-        )
-    with pytest.raises(KeyError):
-        _FlagChecker().violation("flag/missing", Location(), "missing")
-    with pytest.raises(ValueError, match="declared by both"):
-        check(
-            Conversation(),
-            checkers=[_FlagChecker(), _ConflictingChecker()],
-        )
+def test_checked_loading_rejects_incomplete_even_without_errors():
+    call = Call(name="weather", counter=7, payload="{}")
+    with pytest.raises(ConformanceError) as caught:
+        Call.from_json(call.to_json(), check="full")
+    assert caught.value.report.ok
+    assert not caught.value.report.complete
 
 
-def test_rule_table() -> None:
+def test_checks_do_not_mutate_or_sort():
+    conv = Conversation(
+        system=system(), items=[Reply(payload="first"), Document(payload="second")]
+    )
+    before = conv.to_json()
+    conv.check()
+    assert conv.to_json() == before
+
+
+def test_custom_checker_and_warning():
+    class Advisory(Checker):
+        rules = (Rule("custom/advice", "custom advisory", Severity.WARNING),)
+
+        def check(self, value, context=None):
+            yield self.violation(
+                "custom/advice", Location(), "Consider reviewing this."
+            )
+
+    report = Conversation().check(checkers=[Advisory()])
+    assert report.ok and report.complete and len(report.warnings) == 1
+    assert list(report) == list(report.violations)
+    assert len(report) == 1
+    with pytest.raises(ValueError, match="unique"):
+        Conversation().check(checkers=[Advisory(), Advisory()])
+
+
+def test_rule_table_unique():
     table = rule_table()
-    assert {rule.id: rule.default_severity for rule in table} == (
-        EXPECTED_RULE_SEVERITIES
-    )
-    defaults = default_checkers()
-    assert {rule.id for checker in defaults for rule in checker.rules} == set(
-        EXPECTED_RULE_SEVERITIES
-    )
+    assert len(table) == len({rule.id for rule in table})
     assert all(rule.description for rule in table)
-    assert all(
-        first is not second
-        for first, second in zip(defaults, default_checkers(), strict=True)
-    )
 
 
-def test_default_set_on_full_cast() -> None:
-    # full_cast() is deliberately non-conformant: GenericInput (order 3)
-    # follows User (order 5), and get_weather:0 has no prior call.
-    report = check(full_cast())
-    assert not report.ok
-    assert {v.rule for v in report.errors} == {
-        "input-order/canonical-order",
-        "tool-result/unknown-id",
-    }
-    normalized = check(full_cast().normalized())
-    assert "input-order/canonical-order" not in {v.rule for v in normalized.errors}
-    assert check(full_cast(), checkers=[]).ok  # an explicit set replaces defaults
-
-
-def test_conforming_conversation_is_ok() -> None:
-    conversation = Conversation(
-        system=SystemPrompt(
-            effort="low",
-            tools=[ToolSpec(name="bash", json_schema={"type": "object"})],
-        ),
-        items=[
-            Harness(payload="notice"),
-            User(payload="run it"),
-            ToolCall(id="bash:0", name="bash", args={}),
-            Wait(),
-        ],
-    )
-    report = check(conversation)
-    assert report.ok
-    assert {v.rule for v in report.warnings} == {"tool-result/open-call"}
-
-
-def test_pretraining_is_clean() -> None:
-    assert check(pretraining()).ok
-    assert len(check(pretraining())) == 0
+def test_lightweight_paths_do_not_load_jsonschema():
+    code = """
+import sys
+from apertus_common import Conversation, Reply, parse_output_text
+Conversation(items=[Reply(payload="text")]).check(mode="profile")
+parse_output_text('<|out|>call{"name":"weather","counter":0}<|hdr|>bad JSON<|/out|>')
+assert 'jsonschema' not in sys.modules
+"""
+    subprocess.run([sys.executable, "-c", code], check=True)

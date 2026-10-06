@@ -22,8 +22,6 @@ class ControlToken(StrEnum):
     IDs from the tokenizer artifact.
     """
 
-    SYS = "<|sys|>"
-    SYS_END = "<|/sys|>"
     IN = "<|in|>"
     IN_END = "<|/in|>"
     OUT = "<|out|>"

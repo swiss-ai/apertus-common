@@ -1,12 +1,16 @@
 [project]
 name = "apertus-common"
-version = "0.1.0"
+version = "0.2.0"
 description = "Typed reference library for the Apertus 2 conversation format"
 requires-python = ">=3.13"
 dependencies = [
     "jsonschema>=4.26.0",
     "pydantic>=2.13.4",
+    "tokenizers>=0.23.2,<0.24",
 ]
+
+[project.optional-dependencies]
+hf = ["transformers>=5.16"]
 
 [build-system]
 requires = ["hatchling"]
@@ -43,6 +47,7 @@ ignore = ["TRY003"]
 
 [dependency-groups]
 dev = [
+    "transformers>=5.16",
     "mypy>=2.3.0",
     "pyright>=1.1.411",
     "pytest>=9.1.1",

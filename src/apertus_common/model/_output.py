@@ -1,86 +1,95 @@
-"""Concrete output messages carrying model actions back to the world.
-
-Every class extends :class:`~apertus_common.model.OutputMessage` with a fixed
-or deployment-defined routing ``type`` and its payload fields.
-``_conversation`` imports the cast for item discrimination; the renderer
-renders these typed values, while the checker validates cross-message behavior
-such as tool schema conformance. Output types carry no order or authority.
-"""
+"""Apertus 2 outputs preserve payloads independently of conformance."""
 
 from __future__ import annotations
 
-from typing import ClassVar, Literal, cast
+from collections.abc import Mapping, Sequence
+from typing import TYPE_CHECKING, Any, Literal, Self, cast
 
-from pydantic import Field, field_validator
-from pydantic.config import JsonDict
+from pydantic import Field, StrictInt, TypeAdapter, field_validator
 
-from apertus_common.errors import HeaderError
 from apertus_common.model._base import (
     KNOWN_OUTPUT_TYPES,
     HeaderValue,
+    MessageType,
     OutputMessage,
-    UnicodeScalarString,
-    is_registered,
+    check_header_value,
 )
-from apertus_common.model._primitives import FiniteJsonValue, ToolCallId, ToolName
+from apertus_common.model._primitives import FiniteJsonObject, HeaderJsonObject
+
+if TYPE_CHECKING:
+    from apertus_common.checker import CheckMode, CheckOptions
 
 
-class Assistant(OutputMessage):
-    """The reply shown to the user; may carry soft structure the
-    interface renders. Never stripped."""
-
-    type: Literal["assistant"] = "assistant"
-    payload: UnicodeScalarString
-
-
-class Think(OutputMessage):
-    """Reasoning stripped by memory policy; durable conclusions belong elsewhere."""
-
+class Think(OutputMessage, frozen=True):
     type: Literal["think"] = "think"
-    payload: UnicodeScalarString
 
 
-class ToolCall(OutputMessage):
-    """One call to one tool. The fixed wire grammar
-    ``{"name": NAME, "args": ARGS}`` is held as typed fields and
-    produced/parsed by the codec layer; ``args``-vs-schema conformance
-    is a checker concern. ``id`` follows ``NAME:COUNTER`` when model-written."""
-
-    header_keys: ClassVar[frozenset[str]] = frozenset({"id"})
-
-    type: Literal["tool_call"] = "tool_call"
-    id: ToolCallId
-    name: ToolName
-    args: FiniteJsonValue
+class Reply(OutputMessage, frozen=True):
+    type: Literal["reply"] = "reply"
 
 
-class VerifiableAnswer(OutputMessage):
-    """The task's answer as a byte-exact payload for verifiers/RLVR; shape is verifier-defined. A committed claim, never
-    stripped."""
-
-    type: Literal["verifiable_answer"] = "verifiable_answer"
-    payload: UnicodeScalarString
+class Claim(OutputMessage, frozen=True):
+    type: Literal["claim"] = "claim"
 
 
-class GenericOutput(OutputMessage):
-    """A deployment-defined output from the format's open vocabulary.
+class Call(OutputMessage, frozen=True):
+    type: Literal["call"] = "call"
+    name: HeaderValue
+    counter: StrictInt
 
-    Use this class only when no dedicated output class owns ``type`` (format
-    It preserves the payload for deployment-specific routing;
-    deciding whether an unknown or merely unconsumed type needs a harness
-    notice is a serving/checker concern, not model validation.
-    """
+    @classmethod
+    def build(
+        cls,
+        *,
+        name: str,
+        counter: int,
+        payload: str | None = None,
+        arguments: Mapping[str, Any] | None = None,
+        check: CheckMode | CheckOptions | None = None,
+    ) -> Self:
+        if (payload is None) == (arguments is None):
+            raise ValueError("provide exactly one of payload and arguments")
+        if arguments is not None:
+            adapter: TypeAdapter[FiniteJsonObject] = TypeAdapter(FiniteJsonObject)
+            payload = adapter.dump_json(adapter.validate_python(arguments)).decode()
+        assert payload is not None
+        from apertus_common.model._base import apply_model_check
 
-    type: HeaderValue = Field(
-        json_schema_extra=cast(JsonDict, {"not": {"enum": sorted(KNOWN_OUTPUT_TYPES)}})
+        return apply_model_check(
+            cls(name=name, counter=counter, payload=payload), check
+        )
+
+
+def validate_header_json(value: object) -> None:
+    """Enforce the no-decoded-whitespace rule recursively."""
+    if isinstance(value, str):
+        check_header_value(value)
+    elif isinstance(value, Mapping):
+        for key, item in cast(Mapping[str, object], value).items():
+            check_header_value(key)
+            validate_header_json(item)
+    elif isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+        for item in cast(Sequence[object], value):
+            validate_header_json(item)
+
+
+class UnknownOutput(OutputMessage, frozen=True):
+    type: MessageType = Field(
+        json_schema_extra={
+            "not": {"enum": [name for name in sorted(KNOWN_OUTPUT_TYPES)]}
+        }
     )
-    payload: UnicodeScalarString
+    headers: HeaderJsonObject = Field(default_factory=dict)
 
     @field_validator("type")
     @classmethod
-    def _check_type_is_unknown(cls, value: str) -> str:
-        if is_registered("out", value):
-            raise HeaderError(
-                f"{value!r} is a known output type; use its dedicated class"
-            )
+    def _unknown(cls, value: str) -> str:
+        if value in KNOWN_OUTPUT_TYPES:
+            raise ValueError("known output type requires its dedicated model")
+        return value
+
+    @field_validator("headers")
+    @classmethod
+    def _headers(cls, value: FiniteJsonObject) -> FiniteJsonObject:
+        validate_header_json(value)
         return value

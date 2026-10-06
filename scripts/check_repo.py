@@ -14,8 +14,8 @@ from __future__ import annotations
 import sys
 from collections import Counter
 
-from apertus_common import default_checkers, rule_table
-from apertus_common.checker.rules._base import RULE_ID_RE
+from apertus_common import checkers_for, rule_table
+from apertus_common.checker._report import RULE_ID_RE
 
 
 def check_rules() -> list[str]:
@@ -35,7 +35,7 @@ def check_rules() -> list[str]:
         if not rule.description.strip():
             problems.append(f"rule {rule.id!r} has an empty description")
 
-    for checker in default_checkers():
+    for checker in checkers_for("full"):
         if not checker.rules:
             problems.append(f"{type(checker).__name__} declares no rules")
 

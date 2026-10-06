@@ -5,8 +5,8 @@
 ## Project references
 
 `apertus-common` is a typed reference library for the Apertus conversation
-format. The current text-only pilot still needs alignment with the Apertus 2
-profile.
+format. The text-only implementation targets the Apertus 2 profile; external rollout
+gates are tracked in DEVELOPMENT.md.
 
 - Read [DEVELOPMENT.md](DEVELOPMENT.md) before implementing changes. It owns
   scope, plans, open decisions, and module/API conventions.

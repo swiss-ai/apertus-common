@@ -1,138 +1,122 @@
 # apertus-common
 
-Typed reference library for the Apertus conversation format, with a core
-interface inspired by `openai-harmony` and `mistral-common`. It provides shared
-message construction, checking, rendering, and parsing for datasets, training,
-evaluation, harnesses, and serving integrations.
+Typed reference library for the text-only Apertus 2 conversation format.
+It provides immutable messages, explicit conformance checks, native JSON,
+verified token encoding, streaming output parsing and OpenAI message mapping.
+The core interface is inspired by `openai-harmony` and `mistral-common`.
 
-**Current state:** a working text-only pilot of the earlier format. Alignment
-with the current Apertus 2 profile is still pending. Image/audio message parts
-and multimodal integration are not supported.
+**Current state:** the Apertus 2 library migration is implemented. Tokenizer and
+framework integration changes are prepared in separate checkouts; model/server
+rollout and the message-boundary suspension clarification remain release gates.
+Multimodal integration and Jinja maintenance/generation are out of scope.
 
 ## Documentation
 
-- [DEVELOPMENT.md](DEVELOPMENT.md): development scope, plans, open decisions,
-  and coding conventions.
-- [docs/design.md](docs/design.md): implemented architecture and public
-  contracts, including native JSON, OpenAI mapping, and streaming parsing.
-- [AGENTS.md](AGENTS.md): short entry point for coding agents.
+- [DEVELOPMENT.md](DEVELOPMENT.md): scope, integration/interface plans,
+  implementation status, remaining gates and conventions.
+- [docs/design.md](docs/design.md): implemented behavior and public contracts.
+- [AGENTS.md](AGENTS.md): concise contributor entry point.
 
 The external [format specification](https://github.com/swiss-ai/apertus-2-format-spec-proposal/blob/v1-apertus-2-profile/spec.md)
 and [Apertus 2 profile](https://github.com/swiss-ai/apertus-2-format-spec-proposal/tree/v1-apertus-2-profile/profile/apertus_2)
-are the source of truth for format semantics. Tokenizer artifacts are maintained
-in [apertus-omni-tokenizer](https://github.com/swiss-ai/apertus-omni-tokenizer).
-Program context: [library and conformance pilot #856](https://github.com/swiss-ai/apertus-program/issues/856)
-and [format discussion #765](https://github.com/swiss-ai/apertus-program/issues/765).
-
-## Implemented capabilities
-
-| Package | Capability |
-|---|---|
-| `model` | Immutable Pydantic models, text parts, JSON Schema, exact-class round trips, explicit input normalization |
-| `checker` | Conversation-level rules and structured conformance reports |
-| `core` | Shared wire IR and `render_str()` |
-| `formats` | Native JSON and OpenAI message mappers; JSONL dataset convention |
-| `parsing` | Experimental strict streaming parser for generated output text |
-
-Validation of individual fields happens when models are constructed.
-`check()` reports relationships across messages without changing them.
-`Conversation.normalized()` explicitly sorts consecutive input messages into
-canonical order. Format readers normalize by default; disable that when
-auditing observed order.
-
-Native JSON is the library's own lossless serialization. OpenAI conversion
-supports a documented text and tool-call subset and rejects unsupported
-mappings. Serving integrations can use core encoding and parsing features as
-they become available; clients and harnesses use the library's heavier checking
-features. The library neither maintains nor generates Jinja templates.
-
-## Planned next tasks
-
-1. Finalize scope, interfaces, and compatibility policy for the pilot API.
-2. Align models, headers, system prompts, rendering, checking, and adapters with
-   the current Apertus 2 profile.
-3. Integrate the tokenizer artifact, add `encode`, and parse output token IDs.
-4. Provide reference tool/reasoning consumers and lightweight serving adapters.
-5. Package golden conformance fixtures and validate end-to-end integration.
-
-Details and unresolved scope questions live in
-[DEVELOPMENT.md](DEVELOPMENT.md#next-work-and-open-decisions).
+are authoritative. The implemented baseline is revision
+`85874b84605f2a0452d53fe5874cc5eddac1b7f4`.
+Artifacts belong to [apertus-omni-tokenizer](https://github.com/swiss-ai/apertus-omni-tokenizer).
+The text-only Apertus 2 base/instruct artifacts are proposed in
+[PR #35](https://github.com/swiss-ai/apertus-omni-tokenizer/pull/35), independently
+of the multimodal extension.
+Program tracking: [library #856](https://github.com/swiss-ai/apertus-program/issues/856),
+[format #765](https://github.com/swiss-ai/apertus-program/issues/765) and
+[integrations #1128](https://github.com/swiss-ai/apertus-program/issues/1128).
 
 ## Quick start
 
 ```python
-from apertus_common import (
-    Assistant, Conversation, SystemPrompt, User, Wait,
-    check, from_json, render_str, to_json,
-)
+from apertus_common import Conversation, Reply, SystemPrompt, User, Wait, render_str
 
 conversation = Conversation(
-    system=SystemPrompt(effort="medium", behavior="Be brief."),
-    items=[User(payload="Hello"), Assistant(payload="Hi"), Wait()],
+    system=SystemPrompt.build(behavior="Be brief."),
+    items=[User(payload="Hello"), Reply(payload="Hi"), Wait()],
 )
-assert check(conversation).ok
-assert from_json(to_json(conversation), normalize=False) == conversation
+report = conversation.check()
+assert report.ok and report.complete
+assert Conversation.from_json(conversation.to_json()) == conversation
 print(render_str(conversation))
 ```
 
-String rendering preserves payload text verbatim. Payloads containing control
-glyphs are ambiguous in this representation; it is not an untrusted transport
-format. The token encoder is not implemented yet.
-
-Dataset files use one native conversation JSON value per line. `from_json()`
-and `from_openai()` accept `normalize`, `check`, and `strict` controls:
+Constructors validate structure; `.check()` evaluates profile and conversation
+rules explicitly. `report.ok` and `report.complete` distinguish errors from
+missing evidence. Builders and `.from_json(..., check="full")` provide opt-in
+checked construction. Native JSON is versioned and lossless; JSONL datasets
+store one conversation per line. The pre-0.2 pilot API and JSON are incompatible.
 
 ```python
 from apertus_common import from_openai, to_openai
 
-conversation, report = from_openai(
-    [{"role": "user", "content": "Hello"}],
-    normalize=False,
-    check=True,
-)
-request = to_openai(conversation)
+mapped = from_openai([{"role": "user", "content": "Hello"}])
+request = to_openai(mapped.value, context=mapped.context)
+assert request.value["messages"] == [{"role": "user", "content": "Hello"}]
 ```
 
-`strict=True` raises `ConformanceError` on conformance errors. Invalid model
-fields raise Pydantic `ValidationError`; unsupported OpenAI mappings raise
-`AdapterError`. See [format contracts](docs/design.md#native-json-and-openai-message-formats).
+OpenAI mappings return the value, diagnostics and caller-owned tool-ID context.
+Unsupported or lossy conversions fail unless explicitly permitted by a mapping
+policy. Serving adapters use encoding/parsing; harnesses and dataset tooling
+apply the heavier checks.
 
-The experimental `StreamParser` accepts arbitrary text chunks from one output
-segment. Drain provisional payload deltas separately from completed messages:
+## Encoding and output parsing
 
 ```python
-from apertus_common import StreamParser
+from transformers import AutoTokenizer
+from apertus_common import load_encoding
 
-parser = StreamParser()
-parser.push("<|out|> type=assistant <|hdr|> Hello <|/out|>\n<|wait|>")
-parser.finish()
-assert parser.waiting
-messages = parser.take_completed()
-deltas = parser.take_deltas()
+tokenizer = AutoTokenizer.from_pretrained("/path/to/Apertus_2_instruct")
+encoding = load_encoding(tokenizer)
+prompt_ids = encoding.encode_conversation(conversation)
+parser = encoding.output_parser()
+# Feed generated token-ID chunks with parser.push_tokens(chunk).
+# Drain parser.take_events(); parser.finish() returns a Conversation fragment.
 ```
 
-The parser stops at the first failure. `StreamParseError` carries the terminal
-parser, prior completed messages, and raw failure data; consumers own recovery.
-See the [parser contract](docs/design.md#streaming-output-parser).
+Install `apertus-common[hf]` for HF loading. The tokenizer supplies named extra
+roles for input/output start/end, header end and wait, plus standard `pad_token`.
+The encoder snapshots its backend, preserves payloads, excludes all special IDs
+from ordinary text and inserts controls explicitly. No sidecar file is required;
+`load_encoding(local_path)` is also supported. Apply
+`encoding.generation_constraints` in the engine. Rendering and decoded text are
+diagnostic because literal control spellings in payloads are ambiguous there.
 
-## Examples
+```python
+from apertus_common import TextStreamParser
 
-Four executable notebooks demonstrate the public API:
-
-- [Core format](examples/core_format_examples.ipynb): models, metadata, schema,
-  round trips, normalization, and immutability.
-- [Validation](examples/validation_examples.ipynb): reports, severity controls,
-  and custom checkers.
-- [Datasets](examples/dataset_examples.ipynb): JSONL, ingest controls, and OpenAI
-  conversion.
-- [Parsing](examples/parsing_examples.ipynb): streaming, batch parsing,
-  provisional output, failures, and consumer-selected recovery.
-
-Launch a notebook without adding Jupyter as a runtime dependency:
-
-```sh
-uv run --with jupyterlab jupyter lab examples/core_format_examples.ipynb
+parser = TextStreamParser()
+parser.push_text("<|out|>reply<|hdr|>Hello<|/out|><|wait|>")
+output = parser.finish()
+assert output.items == [Reply(payload="Hello"), Wait()]
 ```
+
+Parsing reconstructs typed messages without checking history, tool declarations
+or argument schemas. Call `.check(context=...)` separately.
+`StreamParseError` exposes completed output and a valid recovery boundary;
+the caller discards the malformed suffix. Pydantic `ValidationError` reports
+invalid native structure, `AdapterError` unsupported mappings, `TokenizerError`
+invalid artifacts and `ConformanceError` failed checked construction.
+
+## Examples and remaining work
+
+Four executable, type-checked notebooks cover
+[construction](examples/core_format_examples.ipynb),
+[validation](examples/validation_examples.ipynb),
+[datasets](examples/dataset_examples.ipynb) and
+[streaming parsing](examples/parsing_examples.ipynb).
+The [harness example](examples/harness_roundtrip.py) demonstrates exact token
+continuation with and without queued input and malformed-suffix recovery.
+Launch notebooks with `uv run --with jupyterlab jupyter lab examples/`.
+
+Remaining rollout tasks are to finalize the owning-repository changes, verify
+actual vLLM model generation/HTTP round trips, resolve request suspension versus
+logical wait semantics with the specification owners, and publish the release
+once these gates pass. Details belong to the
+[migration plan](DEVELOPMENT.md#implementation-migration-plan).
 
 ## Development
 
@@ -155,9 +139,8 @@ your IDE's interpreter at `.venv/`. Dependencies are managed with
 ### Tests
 
 ```sh
-make test                     # test suite, incl. an executable copy of the
-                              # spec's order/authority table (tests/test_spec_table.py)
-uv run pytest -k normalized   # a subset, e.g. just the normalization tests
+make test                     # models, checks, mapping, text/token parsing
+uv run pytest -k stream        # a focused subset
 ```
 
 ### Formatting and checkers
@@ -174,6 +157,10 @@ make check-repo # repo invariants (unique, well-formed rule ids)
 make rules      # print the conformance rule table
 make test       # test suite
 make all        # everything CI runs
+make check-artifact APERTUS_ENCODING=/path/to/artifact  # required real artifact
+make harness APERTUS_ENCODING=/path/to/artifact         # token continuation example
+make bench APERTUS_ENCODING=/path/to/artifact           # text/token throughput
+make build      # build wheel and source distribution
 ```
 
 Config lives in `pyproject.toml` (`[tool.ruff]`, `[tool.mypy]`,

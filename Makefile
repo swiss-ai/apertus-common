@@ -41,3 +41,19 @@ test:  ## Run the test suite
 
 .PHONY: all
 all: lint typecheck check-repo test  ## Everything CI runs
+
+.PHONY: check-artifact
+check-artifact:  ## Verify a required real artifact (set APERTUS_ENCODING)
+	uv run python scripts/check_artifact.py "$(APERTUS_ENCODING)"
+
+.PHONY: harness
+harness:  ## Run exact-token continuation example (set APERTUS_ENCODING)
+	uv run python examples/harness_roundtrip.py "$(APERTUS_ENCODING)"
+
+.PHONY: bench
+bench:  ## Measure parser throughput/memory; optionally set APERTUS_ENCODING
+	uv run python scripts/bench_parse.py $(if $(APERTUS_ENCODING),--artifact "$(APERTUS_ENCODING)")
+
+.PHONY: build
+build:  ## Build wheel and source distribution
+	uv build

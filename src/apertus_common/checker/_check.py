@@ -1,92 +1,76 @@
-"""The public conformance entry point: ``check()`` and the rule table."""
+"""Model-method delegation and named checker sets."""
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
-from dataclasses import replace
+from collections.abc import Sequence
 
-from apertus_common.checker._report import ConformanceReport, Severity, Violation
-from apertus_common.checker.rules._base import Checker, Rule
-from apertus_common.checker.rules._ids import IdConventionChecker
-from apertus_common.checker.rules._input_order import InputOrderChecker
-from apertus_common.checker.rules._system_prompt import SystemPromptChecker
-from apertus_common.checker.rules._tool_calls import ToolCallChecker
-from apertus_common.checker.rules._tool_results import ToolResultChecker
-from apertus_common.checker.rules._verifiable_answer import VerifiableAnswerChecker
-from apertus_common.checker.rules._waits import WaitChecker
-from apertus_common.model import Conversation
-
-_BUILTIN_CHECKER_TYPES: tuple[type[Checker], ...] = (
-    SystemPromptChecker,
-    InputOrderChecker,
-    ToolCallChecker,
-    ToolResultChecker,
-    IdConventionChecker,
-    WaitChecker,
-    VerifiableAnswerChecker,
+from apertus_common.checker._context import CheckContext, CheckMode, CheckOptions
+from apertus_common.checker._report import (
+    ConformanceError,
+    ConformanceReport,
+    Unevaluated,
+    Violation,
 )
+from apertus_common.checker.rules._arguments import ArgumentsChecker
+from apertus_common.checker.rules._base import Checker, CheckValue, Rule
+from apertus_common.checker.rules._conversation import ConversationChecker
+from apertus_common.checker.rules._profile import ProfileChecker
 
 
-def default_checkers() -> tuple[Checker, ...]:
-    """Fresh default-configured instances of every builtin checker."""
-    return tuple(checker_type() for checker_type in _BUILTIN_CHECKER_TYPES)
+def checkers_for(mode: CheckMode) -> tuple[Checker, ...]:
+    """Fresh stateless checkers; explicit checker lists replace this preset."""
+    match mode:
+        case "profile":
+            return (ProfileChecker(),)
+        case "conversation":
+            return (ProfileChecker(), ConversationChecker())
+        case "full":
+            return (ProfileChecker(), ConversationChecker(), ArgumentsChecker())
+        case _:
+            raise ValueError(f"unknown check mode: {mode!r}")
 
 
 def rule_table() -> tuple[Rule, ...]:
-    """Every rule declared by the builtin checkers."""
-    return tuple(
-        rule for checker_type in _BUILTIN_CHECKER_TYPES for rule in checker_type.rules
-    )
+    return tuple(rule for checker in checkers_for("full") for rule in checker.rules)
 
 
-def _declared_rules(checkers: Sequence[Checker]) -> set[str]:
-    declared: set[str] = set()
-    families: dict[str, type[Checker]] = {}
-    for checker in checkers:
-        for rule in checker.rules:
-            owner = families.setdefault(rule.id, type(checker))
-            if owner is not type(checker):
-                raise ValueError(
-                    f"rule id {rule.id!r} is declared by both "
-                    f"{owner.__name__} and {type(checker).__name__}; "
-                    "rule families are a namespace, pick a distinct one"
-                )
-            declared.add(rule.id)
-    return declared
-
-
-def check(
-    conversation: Conversation,
+def check_value(
+    value: CheckValue,
+    mode: CheckMode = "full",
     *,
     checkers: Sequence[Checker] | None = None,
-    overrides: Mapping[str, Severity] | None = None,
+    context: CheckContext | None = None,
 ) -> ConformanceReport:
-    """Run conformance checkers over *conversation* and report violations.
-
-    ``checkers=None`` runs :func:`default_checkers`; an explicit sequence
-    replaces the set entirely (extend the defaults with
-    ``[*default_checkers(), MyChecker()]``). ``overrides`` remaps rule
-    ids to severities for this call; ids not declared by any active
-    checker raise ``ValueError``, as do rule ids declared by two distinct
-    checker types. Violations keep emission order; the report never
-    raises on violations.
-    """
-    active = tuple(default_checkers()) if checkers is None else tuple(checkers)
-    declared = _declared_rules(active)
-    if overrides:
-        unknown = sorted(set(overrides) - declared)
-        if unknown:
-            raise ValueError(
-                f"override(s) for rule(s) {unknown} match no active checker"
-            )
+    active = checkers_for(mode) if checkers is None else tuple(checkers)
+    # Even an explicit checker set must not silently accept a misspelled mode.
+    if mode not in ("profile", "conversation", "full"):
+        raise ValueError(f"unknown check mode: {mode!r}")
+    declared: set[str] = set()
     violations: list[Violation] = []
+    unevaluated: list[Unevaluated] = []
     for checker in active:
-        violations.extend(checker.check(conversation))
-    if overrides:
-        violations = [
-            replace(violation, severity=overrides[violation.rule])
-            if violation.rule in overrides
-            else violation
-            for violation in violations
-        ]
-    return ConformanceReport(violations=tuple(violations))
+        ids = [rule.id for rule in checker.rules]
+        if len(ids) != len(set(ids)) or declared.intersection(ids):
+            raise ValueError("checker rule IDs must be unique within a run")
+        declared.update(ids)
+        for finding in checker.check(value, context):
+            if finding.rule not in ids:
+                raise ValueError(f"checker emitted undeclared rule {finding.rule!r}")
+            if isinstance(finding, Violation):
+                violations.append(finding)
+            else:
+                unevaluated.append(finding)
+    return ConformanceReport(tuple(violations), tuple(unevaluated))
+
+
+def apply_check[T: CheckValue](value: T, option: CheckMode | CheckOptions | None) -> T:
+    """One shared opt-in path for native loading and builders."""
+    if option is None:
+        return value
+    options = CheckOptions(mode=option) if isinstance(option, str) else option
+    report = check_value(
+        value, options.mode, checkers=options.checkers, context=options.context
+    )
+    if not report.ok or not report.complete:
+        raise ConformanceError(report)
+    return value

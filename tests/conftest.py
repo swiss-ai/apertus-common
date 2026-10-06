@@ -1,79 +1,55 @@
-"""Shared conversation fixtures exercising the complete cast."""
+"""Shared native Apertus 2 examples."""
 
 from apertus_common import (
-    Assistant,
-    Attachment,
+    Call,
+    Claim,
     Conversation,
     Document,
-    Effort,
-    Event,
-    GenericInput,
-    GenericOutput,
-    Harness,
-    Retrieval,
+    Host,
+    Reply,
+    Result,
     SystemPrompt,
-    TextPart,
     Think,
-    ToolCall,
-    ToolResult,
+    Thinking,
     ToolSpec,
+    UnknownOutput,
     User,
-    VerifiableAnswer,
     Wait,
 )
 
 
 def full_cast() -> Conversation:
-    """One conversation containing every union member and a full system prompt."""
     return Conversation(
         system=SystemPrompt(
-            identity="You are Aria, built by Acme.",
+            thinking=Thinking.MEDIUM,
+            identity="You are Aria.",
             behavior="Be brief.",
-            effort=Effort.MEDIUM,
+            environment="web",
             tools=[
                 ToolSpec(
-                    name="get_weather",
+                    name="weather",
+                    description="Weather",
                     json_schema={"type": "object"},
-                    policy="One city per call.",
                 )
             ],
-            environment="platform: web",
-            extra_tags={"deployment_note": "pilot"},
         ),
         items=[
-            Harness(payload="Current time: 2026-07-19 14:32."),
-            ToolResult(id="get_weather:0", payload='{"tempC":19}'),
-            Retrieval(src="internal-docs:7", payload="The staging cluster..."),
-            Event(payload="Webhook arrived."),
-            Attachment(name="report.pdf", mime="application/pdf", payload="Q2..."),
-            User(
-                payload=[
-                    TextPart(text="What should I wear? "),
-                    TextPart(text="I have a light jacket."),
-                ]
-            ),
-            GenericInput(type="calendar_invite", payload="9:00", extras={"tz": "CET"}),
-            Think(payload="Check the weather first."),
-            ToolCall(
-                id="get_weather:1",
-                name="get_weather",
-                args={"city": "Lisbon", "units": ["C", "F"], "detail": {"wind": True}},
-            ),
+            Host(payload="Current time: 2026-10-01."),
+            Document(payload="Reference", from_="user", id="a1"),
+            User(payload="What is the weather?"),
+            Think(payload="Check."),
+            Call(name="weather", counter=0, payload='{"city":"Zurich"}'),
             Wait(),
-            ToolResult(id="get_weather:1", payload='{"tempC":24}'),
-            VerifiableAnswer(payload="42"),
-            GenericOutput(type="render", payload="<canvas/>"),
-            Assistant(payload="Light jacket."),
+            Result(name="weather", counter=0, payload='{"tempC":20}'),
+            UnknownOutput(type="memo", payload="extra"),
+            Claim(payload="20"),
+            Reply(payload="20 degrees."),
             Wait(),
         ],
     )
 
 
 def pretraining() -> Conversation:
-    """The pretraining shape: no system prompt, document input."""
     return Conversation(
-        items=[
-            Document(payload="Once upon a time..."),
-            Think(payload="Benign fiction."),
-        ]
+        items=[Document(payload="Once upon a time..."), Think(payload="Fiction.")]
     )
