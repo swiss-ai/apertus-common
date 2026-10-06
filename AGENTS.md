@@ -15,14 +15,24 @@ gates are tracked in DEVELOPMENT.md.
 - [README.md](README.md) provides the overview, next tasks, upstream links,
   and canonical development commands.
 - Format and profile repository: `/Users/rkre/swissai_repos/apertus-2-format-spec-proposal`.
-  Read its `spec.md` and `profile/apertus_2/apertus_2.md`. This repository is a
+  Read its `spec.md` and `profile/apertus_2/apertus_2.md` from upstream `v1`
+  (`origin/v1` in the local checkout; the local `v1` branch may be stale).
+  The implemented revision is recorded in `docs/design.md`. This repository is a
   read-only source of truth; raise conflicts instead of silently deviating.
 - Tokenizer repository: `/Users/rkre/swissai_repos/apertus-omni-tokenizer`.
-  Consume its artifact through the planned integration; never vendor or
-  hand-edit tokenizer files here.
-- Core interface reference: [openai-harmony](https://github.com/openai/harmony),
-  local checkout `/Users/rkre/swissai_repos/harmony`.
+  The Apertus 2 instruct artifact is `tokenizers/Apertus_2_instruct` from PR #35
+  until merged. Consume it through `load_encoding`; never vendor or hand-edit
+  tokenizer files here.
+- Framework integration checkouts (Transformers, vLLM):
+  `/Users/rkre/swissai_repos/apertus2-integration-work/`; status and open
+  findings are in DEVELOPMENT.md.
+- Core interface references: [openai-harmony](https://github.com/openai/harmony),
+  local checkout `/Users/rkre/swissai_repos/harmony`, and
+  [mistral-common](https://github.com/mistralai/mistral-common), local checkout
+  `/Users/rkre/PycharmProjects/mistral-common`.
 - Local Swiss AI vLLM checkout: `/Users/rkre/swissai_repos/vllm_swissai`.
+- Program tracking issues are listed in
+  [DEVELOPMENT.md](DEVELOPMENT.md#program-tracking).
 
 ## Working conventions
 

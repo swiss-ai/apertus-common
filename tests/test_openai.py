@@ -400,3 +400,32 @@ def test_claim_omission_requires_its_own_policy() -> None:
 def test_empty_external_function_name_is_a_mapping_error() -> None:
     with pytest.raises(AdapterError):
         from_openai([call_record(name="")])
+
+
+def test_empty_assistant_message_maps_to_empty_reply_with_diagnostic() -> None:
+    mapped = from_openai(
+        [{"role": "user", "content": "hi"}, {"role": "assistant", "content": None}]
+    )
+    assert mapped.value.items[1] == Reply(payload="")
+    assert [d.code for d in mapped.diagnostics] == ["empty-assistant"]
+
+
+def test_null_tool_fields_are_absent_and_strict_false_is_accepted() -> None:
+    mapped = from_openai(
+        [],
+        tools=[
+            {
+                "type": "function",
+                "function": {
+                    "name": "weather",
+                    "description": None,
+                    "parameters": None,
+                    "strict": False,
+                },
+            }
+        ],
+    )
+    assert mapped.value.system is not None
+    tool = mapped.value.system.tools[0]
+    assert tool.description == ""
+    assert tool.json_schema == {"type": "object", "properties": {}}

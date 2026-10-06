@@ -1,13 +1,15 @@
 # apertus-common
 
-Typed reference library for the text-only Apertus 2 conversation format.
+Typed reference library for post-training and serving with the text-only
+Apertus 2 conversation format.
 It provides immutable messages, explicit conformance checks, native JSON,
 verified token encoding, streaming output parsing and OpenAI message mapping.
 The core interface is inspired by `openai-harmony` and `mistral-common`.
 
-**Current state:** the Apertus 2 library migration is implemented. Tokenizer and
-framework integration changes are prepared in separate checkouts; model/server
-rollout and the message-boundary suspension clarification remain release gates.
+**Current state:** the Apertus 2 library migration is implemented and verified
+against the instruct artifact in tokenizer PR #35. The PR review, framework
+adapter fixes, model/server rollout and alignment with the upstream
+message-boundary suspension position remain release gates.
 Multimodal integration and Jinja maintenance/generation are out of scope.
 
 ## Documentation
@@ -17,16 +19,21 @@ Multimodal integration and Jinja maintenance/generation are out of scope.
 - [docs/design.md](docs/design.md): implemented behavior and public contracts.
 - [AGENTS.md](AGENTS.md): concise contributor entry point.
 
-The external [format specification](https://github.com/swiss-ai/apertus-2-format-spec-proposal/blob/v1-apertus-2-profile/spec.md)
-and [Apertus 2 profile](https://github.com/swiss-ai/apertus-2-format-spec-proposal/tree/v1-apertus-2-profile/profile/apertus_2)
+The external [format specification](https://github.com/swiss-ai/apertus-2-format-spec-proposal/blob/85874b84605f2a0452d53fe5874cc5eddac1b7f4/spec.md)
+and [Apertus 2 profile](https://github.com/swiss-ai/apertus-2-format-spec-proposal/tree/85874b84605f2a0452d53fe5874cc5eddac1b7f4/profile/apertus_2)
 are authoritative. The implemented baseline is revision
-`85874b84605f2a0452d53fe5874cc5eddac1b7f4`.
+`85874b84605f2a0452d53fe5874cc5eddac1b7f4`, merged into the spec's `v1` branch.
+The library also implements the leading BOS, always-present system `tools`
+array and non-empty tool names proposed in
+[spec PR #11](https://github.com/swiss-ai/apertus-2-format-spec-proposal/pull/11);
+these changes are not yet part of that baseline.
 Artifacts belong to [apertus-omni-tokenizer](https://github.com/swiss-ai/apertus-omni-tokenizer).
 The text-only Apertus 2 base/instruct artifacts are proposed in
-[PR #35](https://github.com/swiss-ai/apertus-omni-tokenizer/pull/35), independently
-of the multimodal extension.
-Program tracking: [library #856](https://github.com/swiss-ai/apertus-program/issues/856),
-[format #765](https://github.com/swiss-ai/apertus-program/issues/765) and
+[PR #35](https://github.com/swiss-ai/apertus-omni-tokenizer/pull/35).
+Program tracking: [parent #1129](https://github.com/swiss-ai/apertus-program/issues/1129),
+[library #856](https://github.com/swiss-ai/apertus-program/issues/856),
+[format #765](https://github.com/swiss-ai/apertus-program/issues/765),
+[tokenizer #1139](https://github.com/swiss-ai/apertus-program/issues/1139) and
 [integrations #1128](https://github.com/swiss-ai/apertus-program/issues/1128).
 
 ## Quick start
@@ -59,8 +66,9 @@ assert request.value["messages"] == [{"role": "user", "content": "Hello"}]
 ```
 
 OpenAI mappings return the value, diagnostics and caller-owned tool-ID context.
-Unsupported or lossy conversions fail unless explicitly permitted by a mapping
-policy. Serving adapters use encoding/parsing; harnesses and dataset tooling
+Documented representation changes, such as joining text parts, emit diagnostics;
+semantic loss requires an explicit mapping policy. Unsupported conversions fail.
+Serving adapters use encoding/parsing; harnesses and dataset tooling
 apply the heavier checks.
 
 ## Encoding and output parsing
@@ -78,7 +86,10 @@ parser = encoding.output_parser()
 ```
 
 Install `apertus-common[hf]` for HF loading. The tokenizer supplies named extra
-roles for input/output start/end, header end and wait, plus standard `pad_token`.
+roles for input/output start/end, header end and wait, plus standard `pad_token`
+and `bos_token`. `encode_conversation` starts with BOS; `encode_items` does not.
+Use `encode_items` for output-parser round trips and continuation segments;
+the output parser does not accept BOS or input messages.
 The encoder snapshots its backend, preserves payloads, excludes all special IDs
 from ordinary text and inserts controls explicitly. No sidecar file is required;
 `load_encoding(local_path)` is also supported. Apply
@@ -112,11 +123,11 @@ The [harness example](examples/harness_roundtrip.py) demonstrates exact token
 continuation with and without queued input and malformed-suffix recovery.
 Launch notebooks with `uv run --with jupyterlab jupyter lab examples/`.
 
-Remaining rollout tasks are to finalize the owning-repository changes, verify
-actual vLLM model generation/HTTP round trips, resolve request suspension versus
-logical wait semantics with the specification owners, and publish the release
-once these gates pass. Details belong to the
-[migration plan](DEVELOPMENT.md#implementation-migration-plan).
+Remaining work: merge tokenizer PR #35 and spec PR #11, finish and pin the
+framework adapters, align request suspension with the upstream position,
+verify actual vLLM generation/HTTP round trips, then publish.
+Details are in [release gates](DEVELOPMENT.md#external-dependencies-and-release-gates)
+and [open findings](DEVELOPMENT.md#open-findings-from-the-october-6-review).
 
 ## Development
 

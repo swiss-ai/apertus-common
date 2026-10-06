@@ -6,7 +6,6 @@ import sys
 import pytest
 
 from apertus_common.checker import (
-    CheckContext,
     Checker,
     CheckOptions,
     ConformanceError,
@@ -49,10 +48,14 @@ def test_presets_and_replacement():
 
 
 def test_checked_loading_and_builder_use_same_options():
-    options = CheckOptions(
-        mode="conversation", context=CheckContext(purpose="pretraining")
+    options = CheckOptions(mode="conversation")
+    conv = (
+        Conversation.builder()
+        .system(system())
+        .document("text", from_="user", id="d1")
+        .call(name="weather", counter=0, payload="not JSON")
+        .build(check=options)
     )
-    conv = Conversation.builder().document("text").build(check=options)
     assert Conversation.from_json(conv.to_json(), check=options) == conv
     with pytest.raises(ConformanceError) as caught:
         Conversation.from_json(conv.to_json(), check="full")

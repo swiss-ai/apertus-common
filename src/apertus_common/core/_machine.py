@@ -11,7 +11,7 @@ from apertus_common.core._lexeme import ControlLexeme, Lexeme, TextLexeme
 from apertus_common.core._wire import ControlToken
 from apertus_common.errors import ParseFailure
 from apertus_common.model import JsonObject
-from apertus_common.model._base import check_type, strict_json_loads
+from apertus_common.model._base import check_nonempty, check_type, strict_json_loads
 from apertus_common.model._output import validate_header_json
 
 _HEADER_ADAPTER: TypeAdapter[JsonObject] = TypeAdapter(JsonObject)
@@ -89,6 +89,7 @@ def _header(raw: str) -> tuple[str, JsonObject]:
             raise ValueError("call requires exactly name and counter headers")
         if not isinstance(headers["name"], str):
             raise ValueError("call name must be a string")
+        check_nonempty(headers["name"])
         if type(headers["counter"]) is not int:
             raise ValueError("call counter must be an integer")
     return name, headers

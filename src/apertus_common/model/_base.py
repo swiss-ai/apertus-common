@@ -224,6 +224,21 @@ HeaderValue = Annotated[
 ]
 
 
+def check_nonempty(value: str) -> str:
+    if not value:
+        raise ValueError("header value must not be empty")
+    return value
+
+
+NonEmptyHeaderValue = Annotated[
+    HeaderValue,
+    AfterValidator(check_nonempty),
+    WithJsonSchema(
+        {"type": "string", "minLength": 1, "pattern": HEADER_VALUE_JSON_PATTERN}
+    ),
+]
+
+
 def check_type(value: str) -> str:
     if re.fullmatch(r"[A-Za-z0-9_-]+", value) is None:
         raise ValueError(

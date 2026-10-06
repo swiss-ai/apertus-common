@@ -57,7 +57,7 @@ def rules(report):
     return {finding.rule for finding in report.errors}
 
 
-def test_profile_fields_and_pretraining():
+def test_profile_fields_and_document_provenance():
     conv = conversation(
         Document(payload="x"),
         UnknownOutput(type="quack", payload="x"),
@@ -70,10 +70,9 @@ def test_profile_fields_and_pretraining():
         "profile/nonnegative-counter",
         "profile/unique-tool-name",
     }
-    pretraining = Conversation(items=[Document(payload="text")])
-    assert pretraining.check(context=CheckContext(purpose="pretraining")).ok
-    standalone = Document(payload="text").check()
-    assert standalone.ok and not standalone.complete
+    assert "profile/document-provenance" in rules(Document(payload="text").check())
+    provenance = Document(payload="text", from_="user", id="d1").check()
+    assert provenance.ok and provenance.complete
     assert "profile/object-schema" in rules(tool({"type": "array"}).check())
 
 
@@ -128,7 +127,7 @@ def test_document_ids_and_wait_transitions():
     assert (
         conversation(Wait(), User(payload="continue"), Reply(payload="good")).check().ok
     )
-    assert conversation(Wait(), Wait()).check().ok
+    assert conversation(Wait()).check().ok
 
 
 def test_claim_placement_is_advisory_and_multiple_claims_allowed():
@@ -348,23 +347,13 @@ def test_schema_local_resources_and_anchors():
     )
 
 
-def test_empty_names_remain_checkable_in_observed_and_checkpoint_calls():
-    declaration = tool(name="")
-    assert conversation(call(name=""), result(name=""), tools=[declaration]).check().ok
-    partial = conversation(result(name=""), tools=[declaration]).check(
-        context=CheckContext(history="partial")
-    )
-    assert partial.ok and not partial.complete
-    closed = conversation(call(name=""), Host(payload="closed"), tools=[declaration])
-    assert closed.check(context=CheckContext(host_closures=(HostClosure(1, 0, ""),))).ok
-    checkpoint = HistoryCheckpoint(
-        calls=(CallState(0, ""),), next_call_counter=1, waiting=False
-    )
-    assert (
-        conversation(result(name=""), tools=[declaration])
-        .check(context=CheckContext(history="partial", checkpoint=checkpoint))
-        .ok
-    )
+def test_context_evidence_rejects_empty_names_and_document_ids():
+    with pytest.raises(ValueError):
+        CallState(0, "")
+    with pytest.raises(ValueError):
+        HostClosure(1, 0, "")
+    with pytest.raises(ValueError):
+        HistoryCheckpoint(document_ids=frozenset({""}))
 
 
 def test_arguments_checker_reports_missing_matching_declaration():
@@ -396,3 +385,12 @@ def test_instance_dialect_keys_are_not_treated_as_schema_declarations(keyword):
         {"type": "object", keyword: [instance] if keyword == "examples" else instance}
     )
     assert conversation(tools=[declaration]).check().ok
+
+
+def test_wait_after_wait_requires_input():
+    assert "conversation/wait" in rules(conversation(Wait(), Wait()).check())
+    assert conversation(Wait(), User(payload="again"), Wait()).check().ok
+    fragment = Conversation(items=[Wait()]).check(
+        context=CheckContext(history="partial")
+    )
+    assert fragment.ok and not fragment.complete

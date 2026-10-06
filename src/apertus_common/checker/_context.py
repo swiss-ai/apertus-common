@@ -24,10 +24,10 @@ class CallState:
     def __post_init__(self) -> None:
         if type(self.counter) is not int or self.counter < 0:
             raise ValueError("checkpoint call counters must be non-negative integers")
-        if type(self.name) is not str or self.status not in (
-            "pending",
-            "result",
-            "host-closed",
+        if (
+            type(self.name) is not str
+            or not self.name
+            or self.status not in ("pending", "result", "host-closed")
         ):
             raise ValueError("invalid checkpoint call name or status")
 
@@ -60,6 +60,8 @@ class HistoryCheckpoint:
                 )
         if self.document_ids is not None:
             object.__setattr__(self, "document_ids", frozenset(self.document_ids))
+            if any(type(i) is not str or not i for i in self.document_ids):
+                raise ValueError("checkpoint document IDs must be nonempty strings")
         if self.waiting is not None and type(self.waiting) is not bool:
             raise ValueError("checkpoint waiting must be a boolean or None")
 
@@ -78,23 +80,24 @@ class HostClosure:
             raise ValueError("host item must be a non-negative integer")
         if type(self.counter) is not int:
             raise ValueError("host closure counter must be an integer")
-        if type(self.name) is not str or self.source not in ("value", "prefix"):
+        if (
+            type(self.name) is not str
+            or not self.name
+            or self.source not in ("value", "prefix")
+        ):
             raise ValueError("invalid host closure name or source")
 
 
 @dataclass(frozen=True, slots=True)
 class CheckContext:
-    """Evidence and purpose, independent from the selected checker preset."""
+    """History evidence, independent from the selected checker preset."""
 
-    purpose: Literal["serving", "pretraining"] = "serving"
     history: Literal["complete", "partial"] = "complete"
     prefix: Conversation | None = None
     checkpoint: HistoryCheckpoint | None = None
     host_closures: tuple[HostClosure, ...] | None = None
 
     def __post_init__(self) -> None:
-        if self.purpose not in ("serving", "pretraining"):
-            raise ValueError("purpose must be serving or pretraining")
         if self.history not in ("complete", "partial"):
             raise ValueError("history must be complete or partial")
         if self.checkpoint is not None and self.history != "partial":

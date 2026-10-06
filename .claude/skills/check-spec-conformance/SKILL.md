@@ -12,9 +12,9 @@ stage or commit changes.
 ## Baseline
 
 - `DEVELOPMENT.md` owns scope, plans, exclusions, and open decisions.
-- `docs/design.md` records implemented behavior. The current pilot has not yet
-  been aligned with the current Apertus 2 profile; distinguish this known gap
-  from regressions against implemented contracts.
+- `docs/design.md` records implemented behavior and the implemented profile
+  revision. Distinguish documented release gates and open findings in
+  `DEVELOPMENT.md` from regressions against implemented contracts.
 - `README.md` and `AGENTS.md` identify upstream sources and local checkouts.
   Read both `spec.md` and `profile/apertus_2/apertus_2.md` from a compatible
   upstream revision. Do not assume the reference profile and Apertus 2 profile

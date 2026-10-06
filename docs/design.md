@@ -2,8 +2,11 @@
 
 `apertus-common` implements the text-only Apertus 2 profile at specification
 revision `85874b84605f2a0452d53fe5874cc5eddac1b7f4`. The external format and
-profile are authoritative. Scope, integration plans and remaining release gates
-live in [DEVELOPMENT.md](../DEVELOPMENT.md).
+profile are authoritative. Leading BOS, an always-present system `tools` array
+and non-empty tool names also follow the decisions proposed in
+[spec PR #11](https://github.com/swiss-ai/apertus-2-format-spec-proposal/pull/11),
+which are not yet part of this baseline. Scope, integration plans and remaining
+release gates live in [DEVELOPMENT.md](../DEVELOPMENT.md).
 
 ## Architecture
 
@@ -21,13 +24,15 @@ package root. Internal modules are underscore-prefixed. Encoding loads the
 `tokenizers` runtime only when an artifact is opened; argument-schema checking
 loads `jsonschema` only when requested. Construction, rendering and parsing do
 not run conformance checks. No framework dependency, Jinja template, scheduler,
-tool execution or multimodal message model is included.
+tool execution or multimodal message model is included. The library targets
+post-training and serving; pretraining framing and checking are out of scope.
 
 ## Native models and storage
 
 `Conversation(system=None, items=...)` retains supplied order. Its optional
 `SystemPrompt` is separate from the items and renders first as a regular system
-input carrying compact JSON. Input messages are `Host`, `User`,
+input carrying compact JSON; `tools` is always present, an empty array when no
+tools are declared. Input messages are `Host`, `User`,
 `Document(from_, id)` and `Result(name, counter)`; outputs are `Think`, `Reply`,
 `Claim` and `Call(name, counter)`. All messages have a text `payload`.
 `UnknownOutput(type, headers, payload)` preserves unfamiliar output types.
@@ -44,7 +49,10 @@ remain text until explicitly parsed or checked.
 Models and their nested collections are immutable. Scalar coercion, non-finite
 JSON numbers, invalid Unicode and malformed header values are rejected.
 Counters must be integers structurally; negative or out-of-sequence counters
-are conformance findings. Header strings cannot contain decoded whitespace.
+are conformance findings. Header strings cannot contain decoded whitespace,
+and document `from` and `id` must be non-empty when present. Tool, `call` and
+`result` names must be non-empty; the parser reports an empty call name as an
+`INVALID_HEADER` failure.
 Payload whitespace and Unicode are preserved, without normalization.
 
 Every model has `builder()`, `from_json()`, `to_json()` and `check()`.
@@ -71,8 +79,8 @@ Native conversation JSON requires `schema_version: 1`; native messages require
 their `direction` and `type` discriminators. Constructors supply fixed defaults.
 `Message.from_json()` dispatches to the concrete type. Loading rejects duplicate
 JSON keys, constructor-only aliases (`from_`, `json_schema`) and missing or
-unsupported versions. Native JSON uses `from` and `schema`. Use these helpers for storage;
-Pydantic's lower-level construction/copy APIs are not substitutes for this
+unsupported versions. Native JSON uses `from` and `schema`. Use these helpers
+for storage; Pydantic's lower-level construction/copy APIs are not substitutes for this
 contract. `Conversation.model_json_schema()` exports the schema with identifier
 `urn:apertus-common:native:1`. JSONL datasets contain one native conversation per
 line. The pilot JSON and Python API have no compatibility aliases or converters.
@@ -97,10 +105,12 @@ means no missing evidence. Warnings do not make `ok` false.
 `CheckOptions`; they raise `ConformanceError(report)` for errors or incomplete
 checks. They never return a partially checked success.
 
-`CheckContext` carries serving/pretraining purpose, complete/partial history,
-an optional preceding conversation, checkpoint and explicit host closures.
-`HistoryCheckpoint` supplies known system, next call counter, call states,
-document IDs and waiting state before a retained segment. `None` means unknown;
+`CheckContext` carries complete/partial history, an optional preceding
+conversation, checkpoint and explicit host closures. Every document requires
+`from` and `id`, and a complete history requires a system prompt.
+`HistoryCheckpoint` requires `CheckContext(history="partial", ...)` and supplies
+known system, next call counter, call states, document IDs and waiting state
+before a retained segment. `None` means unknown;
 empty collections mean known empty. Complete histories start at counter zero.
 Partial histories evaluate observable facts and report absent evidence as
 unevaluated. `HostClosure` identifies a host item's closure of a particular
@@ -108,8 +118,8 @@ call; host prose is never interpreted. Reports locate findings in the value,
 prefix or checkpoint. No checker mutates these inputs.
 
 Pending calls and unfinished conversations are allowed. After a wait, further
-output requires input. Result association uses counter and name; duplicate or
-unmatched results, reused counters and duplicate document IDs are findings.
+output or another wait requires input. Result association uses counter and name;
+duplicate or unmatched results, reused counters and duplicate document IDs are findings.
 Claim-after-reply placement is advisory. Queue scheduling remains a harness
 responsibility.
 
@@ -127,14 +137,16 @@ The seven controls are `<|in|>`, `<|/in|>`, `<|out|>`, `<|/out|>`, `<|hdr|>`,
 `<|wait|>` and `<|pad|>`. An envelope consists of an opening control, type,
 optional compact JSON header, header delimiter, payload and closing control.
 `render_str(conversation)` inserts no separators or payload whitespace. Rendered
-text is diagnostic: literal control spellings inside payloads are ambiguous.
+text omits BOS and is diagnostic: literal control spellings inside payloads are
+ambiguous.
 
 `load_encoding(tokenizer)` binds a loaded HF fast tokenizer. Six named extra
 roles (`input_start_token`, `input_end_token`, `output_start_token`,
 `output_end_token`, `header_end_token`, `wait_token`) and standard `pad_token`
-identify the seven controls. Loading verifies their spellings, IDs and special
-registration, the full backend special inventory, and a lossless BPE/ByteLevel
-configuration without normalization. It snapshots the backend, disables its
+identify the seven controls, and the standard `bos_token` names a registered
+special token distinct from them. Loading verifies their spellings, IDs and
+special registration, the full backend special inventory, and a lossless
+BPE/ByteLevel configuration without normalization. It snapshots the backend, disables its
 padding, truncation and postprocessor, and never changes the caller's tokenizer.
 All backend special IDs are excluded from content, including unnamed reserves;
 HF `all_special_ids` alone is insufficient. No binding sidecar is required.
@@ -143,9 +155,14 @@ The tokenizer repository's registry and checksums establish artifact provenance.
 artifact acquisition remains the caller's responsibility.
 
 `encode_conversation`, `encode_items` and `encode_text` return token IDs.
-Encoding inserts controls explicitly and disables added-special recognition for
-all header/payload text, merging adjacent ordinary text before encoding. It
-adds no system, wait or generation prefix and performs no conformance checks.
+`encode_conversation` encodes a complete sequence and starts with
+`bos_token_id`, which the tokenizer does not insert itself; `encode_items` and
+`encode_text` never add it. Encoding inserts controls explicitly and disables
+added-special recognition for all header/payload text, merging adjacent ordinary
+text before encoding. It adds no EOS, system, wait or generation prefix and
+performs no conformance checks.
+Use `encode_items` for output-parser round trips and continuation segments;
+the output parser rejects BOS and input messages.
 `decode_text` is diagnostic. Token-ID parsing recognizes controls by ID, so
 literal spellings in ordinary text remain payload.
 
@@ -153,8 +170,10 @@ literal spellings in ordinary text remain payload.
 provides wait as EOS and forbids every special ID except output-start,
 output-end, header-end and wait. Adapters must apply that mask.
 `vocab_size`, `special_token_ids`, `get_vocab`, `token_to_id` and `id_to_token`
-provide the metadata needed by framework tokenizer wrappers. Request suspension
-at a message end is distinct from EOS and remains an external integration gate.
+provide the metadata needed by framework tokenizer wrappers; `token_bytes`
+returns the raw bytes of an ordinary vocabulary entry for incremental decoding.
+Request suspension at a message end is distinct from EOS and remains an external
+integration gate.
 
 ## Output parsing and recovery
 
@@ -165,9 +184,11 @@ are `encoding.output_parser()` (`push_tokens`) and `TextStreamParser`
 
 `take_events()` drains ordered `MessageStart(index, type, headers)`,
 `PayloadDelta(index, text)`, `MessageCompleted(index, message)` and
-`WaitReached()` events. Payload deltas are provisional. Typed messages are
+`WaitReached()` events. Typed messages are
 constructed once, on close. Invalid argument JSON and unknown output types
 survive parsing; malformed framing or headers fail immediately.
+`MessageStart` guarantees a structurally valid header. Payload deltas remain
+provisional until the message closes successfully.
 
 `current` exposes an `OpenMessage`; `boundary` is `EMPTY`, `IN_MESSAGE`,
 `MESSAGE_END` or `WAIT`. `consumed` and `last_valid_boundary` use characters for
@@ -199,7 +220,12 @@ fields, content kinds or message relationships raise `AdapterError` with a
 location and reason.
 
 Supported input includes text system/user/assistant/tool messages, reasoning
-text and function tools/calls. Text-part arrays are joined with diagnostics.
+text and function tools/calls. Developer messages and multiple system messages
+require `MappingPolicy(merge_system_messages=True)` and must precede all other
+messages. Text-part arrays are joined with diagnostics,
+and an empty assistant message becomes an empty reply with an `empty-assistant`
+diagnostic. Null tool fields count as absent; `strict: false` is accepted and
+`strict: true` is rejected because no constrained decoding exists.
 The default policy rejects mappings that would lose native information,
 including host/document/unknown outputs, claim omission, richer system settings
 or unrepresentable assistant ordering. `MappingPolicy` explicitly permits
@@ -216,13 +242,15 @@ finish reasons belong to framework adapters.
 
 ## Errors and verification
 
+Library exceptions derive from `ApertusFormatError`, except the
+`RuntimeError` subclass `ParserStateError`.
+
 | Exception | Contract |
 | --- | --- |
-| Pydantic `ValidationError` | Invalid native structure or JSON |
-| `HeaderError` | Invalid header syntax/value |
+| Pydantic `ValidationError` | Invalid native structure, JSON or header values during construction and loading |
 | `AdapterError` | Unsupported/conflicting mapping or event sequence |
 | `TokenizerError` | Invalid artifact or encoding input |
-| `StreamParseError` | Terminal output framing, header or decoding failure |
+| `StreamParseError` | Terminal output framing, header or decoding failure; `reason` is a `ParseFailure` |
 | `ParserStateError` | Parser reused after termination |
 | `ArgumentError` | Invalid argument JSON/object |
 | `ConformanceError` | Requested checks failed or were incomplete |

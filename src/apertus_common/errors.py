@@ -13,10 +13,6 @@ class ApertusFormatError(Exception):
     """Base class for invalid Apertus format data."""
 
 
-class HeaderError(ApertusFormatError, ValueError):
-    """A header cannot be represented in the Apertus grammar."""
-
-
 class ArgumentError(ApertusFormatError, ValueError):
     """Call arguments are invalid JSON or do not have an object root."""
 

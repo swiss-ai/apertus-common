@@ -21,7 +21,7 @@ class ProfileChecker(Checker):
         ),
         Rule(
             "profile/document-provenance",
-            "serving documents declare supplying party and citation ID",
+            "documents declare supplying party and citation ID",
         ),
         Rule("profile/unique-tool-name", "declared tool names are unique"),
         Rule("profile/object-schema", "tool schemas declare object-root arguments"),
@@ -45,18 +45,11 @@ class ProfileChecker(Checker):
                     "counter must be non-negative",
                 )
             if isinstance(item, Document) and (item.from_ is None or item.id is None):
-                if not current.purpose_known:
-                    yield Unevaluated(
-                        "profile/document-provenance",
-                        location,
-                        "document purpose is not supplied",
-                    )
-                elif current.context.purpose == "serving":
-                    yield self.violation(
-                        "profile/document-provenance",
-                        location,
-                        "serving documents require both from and id",
-                    )
+                yield self.violation(
+                    "profile/document-provenance",
+                    location,
+                    "documents require both from and id",
+                )
         names: set[str] = set()
         for index, tool in enumerate(current.tools or ()):
             location = replace(current.system_location, field=f"tools[{index}]")

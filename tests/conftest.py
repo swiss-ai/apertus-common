@@ -47,9 +47,3 @@ def full_cast() -> Conversation:
             Wait(),
         ],
     )
-
-
-def pretraining() -> Conversation:
-    return Conversation(
-        items=[Document(payload="Once upon a time..."), Think(payload="Fiction.")]
-    )

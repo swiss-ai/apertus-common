@@ -1,6 +1,6 @@
 ---
 name: check-stakeholder-state
-description: Check the Apertus format/profile and tokenizer repositories and swiss-ai/apertus-program issues 856 and 765 for upstream changes and their implications for apertus-common. Use for stakeholder status or upstream-change reviews; suggest updates to DEVELOPMENT.md, docs/design.md, README.md, or AGENTS.md without applying them.
+description: Check the Apertus format/profile and tokenizer repositories and swiss-ai/apertus-program tracking issues (1129, 765, 856, 1139, 1128) for upstream changes and their implications for apertus-common. Use for stakeholder status or upstream-change reviews; suggest updates to DEVELOPMENT.md, docs/design.md, README.md, or AGENTS.md without applying them.
 ---
 
 # check-stakeholder-state
@@ -18,7 +18,7 @@ locations, development scope, and implemented behavior.
 |---|---|---|
 | Format and profile | `/Users/rkre/swissai_repos/apertus-2-format-spec-proposal`; [remote](https://github.com/swiss-ai/apertus-2-format-spec-proposal) | relevant revision/profile branches, `main`, PRs, `spec.md`, and `profile/apertus_2/` changes |
 | Tokenizer | `/Users/rkre/swissai_repos/apertus-omni-tokenizer`; [remote](https://github.com/swiss-ai/apertus-omni-tokenizer) | current and target branches, PRs, tokenizer artifacts and build recipes |
-| Tracking issues | [856](https://github.com/swiss-ai/apertus-program/issues/856), [765](https://github.com/swiss-ai/apertus-program/issues/765) | new comments, status changes, and linked issues or PRs |
+| Tracking issues | [1129](https://github.com/swiss-ai/apertus-program/issues/1129), [765](https://github.com/swiss-ai/apertus-program/issues/765), [856](https://github.com/swiss-ai/apertus-program/issues/856), [1139](https://github.com/swiss-ai/apertus-program/issues/1139), [1128](https://github.com/swiss-ai/apertus-program/issues/1128) | new comments, status changes, decisions, and linked issues or PRs |
 
 Discover the relevant branches and artifact paths from the recorded references
 and local repositories. Do not assume an older branch or artifact path remains
@@ -40,8 +40,8 @@ an initial baseline.
    commit titles. Record the revisions used.
 4. Inspect relevant PRs using `gh pr list` and `gh pr view`, filtering by the
    prior check time when available.
-5. Read new issue comments and status changes with `gh issue view` for issues
-   856 and 765. Summarize decisions and open questions, not just titles.
+5. Read new issue comments and status changes with `gh issue view` for the
+   tracking issues above. Summarize decisions and open questions, not just titles.
 6. Classify effects on development scope, implemented contracts, tokenizer
    compatibility, adapters, tests, and fixtures. Distinguish planned profile
    alignment from newly introduced discrepancies.

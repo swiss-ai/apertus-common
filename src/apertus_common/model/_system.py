@@ -8,9 +8,9 @@ from typing import TYPE_CHECKING, Annotated, Self
 from pydantic import BeforeValidator, Field
 
 from apertus_common.model._base import (
-    HeaderValue,
     ImmutableList,
     Model,
+    NonEmptyHeaderValue,
     UnicodeScalarString,
 )
 from apertus_common.model._primitives import FiniteJsonObject, Thinking
@@ -26,7 +26,7 @@ def _thinking(value: object) -> object:
 
 
 class ToolSpec(Model, frozen=True):
-    name: HeaderValue
+    name: NonEmptyHeaderValue
     description: UnicodeScalarString
     json_schema: FiniteJsonObject = Field(
         validation_alias="schema", serialization_alias="schema"

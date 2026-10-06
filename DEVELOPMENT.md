@@ -4,8 +4,9 @@ This is the single development reference for scope, plans, open decisions, and
 conventions. [docs/design.md](docs/design.md) records implemented behavior;
 [README.md](README.md) provides the overview and next tasks.
 
-State: The text-only Apertus 2 library migration is implemented against profile
-revision `85874b84605f2a0452d53fe5874cc5eddac1b7f4`. The
+State: The text-only Apertus 2 library migration uses profile revision
+`85874b84605f2a0452d53fe5874cc5eddac1b7f4` as its baseline, with the
+October 6 BOS and header decisions below anticipating spec PR #11. The
 [migration status](#implementation-status) separates verified library behavior
 from remaining framework/model rollout gates.
 
@@ -53,13 +54,17 @@ The following issues in `swiss-ai/apertus-program` coordinate this work:
   tracks the integration inventory, affected components, ownership, and
   dedicated integration sub-issues. Consult it when format or library changes
   require updates in consuming frameworks and pipelines.
+- [#1139: Apertus 2 instruct tokenizer build and release](https://github.com/swiss-ai/apertus-program/issues/1139)
+  tracks the instruct artifact consumed by `load_encoding`, its review in
+  tokenizer PR #35, and token-slot decisions such as BOS/EOS use.
 
 ## Stage 1 - Define scope and interfaces
 
 The library provides reusable format operations for Apertus 2 pipelines while
 leaving harness responsibilities to its consumers. Target use cases include:
 
-- Pretraining, SFT, and RL infrastructure, such as Megatron and NeMo RL.
+- Post-training (SFT and RL) infrastructure, such as Megatron Bridge and
+  NeMo RL. Pretraining data preparation is out of scope.
 - Creation and verification of post-training datasets, both raw and tokenized.
 - Evaluation in different frameworks.
 - Message construction and handling in harnesses and interfaces, such as Pi,
@@ -119,9 +124,10 @@ directly. Multimodal integration is out of scope for now.
 ## Technical Integration Plan
 
 The strategy below is implemented in separate tokenizer and framework checkouts.
-CPU adapter verification is complete; actual vLLM engine/HTTP continuation and
-upstream suspension semantics remain open. Paths and evidence are recorded in
-[implementation status](#implementation-status).
+CPU adapter suites were re-verified against the October 6 tokenizer revision,
+as recorded in implementation status. Actual vLLM engine/HTTP continuation and alignment
+with the upstream suspension position remain open. Paths, evidence and open
+findings are recorded in [implementation status](#implementation-status).
 
 ### System prompt creation in both integrations
 
@@ -198,7 +204,10 @@ must supply the special-token mask itself, for example through `allowed_token_id
 containing ordinary IDs plus the four allowed output controls. The chat
 renderer/parser request adjustment does not run for raw completions. Closing-token
 retention and resubmission still require engine-level verification.
-A plugin can later expose native JSON.
+A plugin can later expose native JSON. The spec author's position in
+[#765](https://github.com/swiss-ai/apertus-program/issues/765#issuecomment-5233355020)
+conflicts with this `<|/out|>` stop; see
+[release gates](#external-dependencies-and-release-gates).
 
 Resend the full retained context as token IDs on each request (standard for
 vLLM's stateless chat/completions APIs). With previous prompt `P`, returned
@@ -238,9 +247,9 @@ this API without adding format logic or harness state.
 `json_schema`, `from` for `from_`, and message type discriminators. Conversation
 items contain input/output messages and waits, never another system prompt.
 `schema_version` versions native storage only and is never encoded into tokens.
-`system=None` represents pretraining data or a conversation fragment, including
-parsed output. Documents without provenance support pretraining; a complete
-serving prompt requires a system prompt and document provenance. Preserve order
+`system=None` represents a conversation fragment, including parsed output.
+Pretraining records are out of scope: every document requires provenance, and
+a complete history requires a system prompt. Preserve order
 and payloads, including invalid call-argument text and well-framed unknown
 output types.
 
@@ -308,7 +317,7 @@ Modes select cumulative named checker sets:
 
 | Mode | Checks |
 | --- | --- |
-| `profile` | Known message types, non-negative counters, document provenance by purpose, unique tool names and object-schema declaration shape |
+| `profile` | Known message types, non-negative counters, document provenance, unique tool names and object-schema declaration shape |
 | `conversation` | Profile checks plus tool lookup, counters, call/result/host-closure relationships, document-ID uniqueness, system presence, burst transitions and claim-placement guidance |
 | `full` | Conversation checks plus schema compilation and strict argument JSON/schema validation |
 
@@ -352,6 +361,7 @@ encoding.decode_text(token_ids) -> str
 render_str(conversation) -> str
 
 encoding.controls -> ControlTokenIds
+encoding.bos_token_id -> int
 encoding.generation_constraints -> GenerationConstraints
 encoding.vocab_size -> int
 encoding.special_token_ids -> frozenset[int]
@@ -360,13 +370,16 @@ encoding.token_to_id(token) -> int | None
 encoding.id_to_token(token_id) -> str | None
 ```
 
-Loading verifies the tokenizer/profile binding and required control tokens.
+Loading verifies the tokenizer/profile binding, the required control tokens and
+a registered BOS token. `encode_conversation` encodes a complete sequence and
+starts with BOS, because the base model saw BOS at every pretraining sequence
+start and the tokenizer does not insert it.
 Encoding enforces structure and faithfully encodes the supplied models, without
 running conformance checks or requiring a system prompt. Serving readiness,
 including system presence and document provenance, belongs to explicit
 `.check()` calls with the relevant context. `encode_items` encodes additional
-messages/waits without a system prompt. Neither method adds waits or generation
-prefixes. Ordinary text cannot encode to special-token IDs; adjacent text
+messages/waits without a system prompt or BOS. Neither method adds EOS, waits or
+generation prefixes. Ordinary text cannot encode to special-token IDs; adjacent text
 pieces between control tokens are encoded as one run. Text rendering/decoding
 is diagnostic, not a lossless transport when literal control-token spellings
 occur in payloads.
@@ -476,8 +489,10 @@ finish reasons.
 
 Parser errors expose a stable reason code, offset/unit, message index, last
 valid boundary, and completed output. Recovery uses a new parser selected by
-the harness. Library exceptions preserve their types and diagnostics across
-adapters; no automatic recovery, execution, or scheduling is added.
+the harness. The library preserves exception types and diagnostics. Framework
+adapters may translate them at their API boundary: Transformers propagates them,
+while vLLM wraps library failures in `ValueError` for HTTP 400 responses.
+No automatic recovery, execution, or scheduling is added by the library.
 
 ### Decisions for the first implementation
 
@@ -490,7 +505,11 @@ Accept Python sequences/mappings and freeze them recursively. Counters must be
 integers structurally; non-negativity, uniqueness and sequencing are checks.
 Known messages have only their declared header fields. Header syntax, including
 the ban on whitespace in decoded header strings, is structural and always
-enforced by models/parsing. Preserve unknown output
+enforced by models/parsing. Document `from` and `id` are non-empty when present
+(the profile's "required, non-empty strings"). Tool, `call` and `result` names
+are non-empty: the profile requires a declared tool `name` that the call copies
+and the harness dispatches on, so an empty name is a malformed header. Spec
+PR #11 states this explicitly. Preserve unknown output
 types and their syntactically valid compact JSON headers as `UnknownOutput`;
 do not invent unknown input types. `Message` is the common public base;
 `Message.from_json()` dispatches using native `direction` and `type`, while
@@ -506,9 +525,8 @@ without repeating a version field on every item. Export the JSON Schema with a
 versioned identifier; future incompatible storage changes increment the version.
 
 **Checking context.** Use immutable
-`CheckContext(purpose="serving", history="complete", prefix=None,
-checkpoint=None, host_closures=None)`. `purpose` is `serving` or `pretraining`;
-`history` is `complete` or `partial`, describing whether the supplied prefix
+`CheckContext(history="complete", prefix=None, checkpoint=None,
+host_closures=None)`. `history` is `complete` or `partial`, describing whether the supplied prefix
 and value cover the history from its origin, not whether generation has ended.
 `prefix` is a conversation immediately preceding the checked value. A
 `HistoryCheckpoint` supplies known system configuration, next call counter,
@@ -588,8 +606,11 @@ explicit compatibility extension. No OpenAI SDK dependency: use library-owned
 typed dictionaries. Preserve raw argument strings, require tool-call IDs, and
 reject unsupported roles, meaningful unknown fields, non-text content and
 ambiguous mappings. Text-part lists may be joined with a conversion diagnostic.
-Missing tool descriptions become empty strings; absent parameters use an empty
-object schema. Do not turn missing/malformed call arguments into `{}`.
+Missing or null tool descriptions become empty strings; absent or null
+parameters use an empty object schema. `strict: false` is accepted; `strict:
+true` is rejected because there is no constrained decoding. An assistant
+message without content, reasoning or calls becomes an empty reply with an
+`empty-assistant` diagnostic. Do not turn missing/malformed call arguments into `{}`.
 These representation changes are documented normalizations; semantic loss
 requires a specific policy flag and is never covered by a generic allow flag.
 
@@ -677,7 +698,8 @@ old coverage merely to make intermediate commits green.
    of the target native JSON schema and public signatures as the implementation
    lands; do not introduce skipped tests as evidence of completion.
    **Exit:** every normative requirement has an owner and acceptance case;
-   known source conflicts are recorded below.
+   known source conflicts are recorded below. Pretraining coverage in the
+   original plan was removed by the October 6 scope decision.
 
 2. **Replace models, construction, JSON and string framing.** Update
    `model/_base.py`, `_primitives.py`, `_system.py`, `_input.py`, `_output.py`
@@ -771,7 +793,7 @@ of conformance and argument validation. All four notebooks use the new API;
 | --- | --- |
 | Seven controls, compact envelopes, system JSON, exact payloads | Models/core; literal fixtures in `test_render.py`, inventory in `test_spec_table.py` |
 | Typed headers, discriminators, immutable native JSON | Models; header/JSON/immutability tests, versioned schema snapshot in `tests/fixtures/native-v1.schema.json` |
-| Serving/pretraining provenance, unique tools/documents, call/result counters | Explicit profile/conversation checkers; `test_checker.py` and `test_checker_rules.py` |
+| Document provenance, unique tools/documents, call/result counters | Explicit profile/conversation checkers; `test_checker.py` and `test_checker_rules.py` |
 | FIFO arrivals, queued-input placement, dispatch and host closures | Harness; order preserved by models/encoding, explicit closure evidence in checks, `examples/harness_roundtrip.py` |
 | Argument object syntax and declared schema | Explicit argument helpers/checker; malformed calls retained by both parsers, checker regressions |
 | Framing errors, unknown outputs, wait boundary and incomplete generation | Shared parser; exhaustive small splits, failure/reconstruction suites and token tests |
@@ -785,49 +807,71 @@ mapper error handling, tokenizer configuration validation and framework request
 plumbing. Reviews and executable checks are required again after any further
 contract change.
 
-Integration changes are kept in separate checkouts under
+Integration checkouts and the tokenizer symlink are under
 `/Users/rkre/swissai_repos/apertus2-integration-work/`:
 
-- `tokenizer-text`: the text-only branch `feat/apertus-2-text-tokenizers`, based
-  directly on tokenizer `main`. `tokenizers/Apertus_2` is the byte-identical
+- `tokenizer-text`: a symlink to `/Users/rkre/swissai_repos/apertus-omni-tokenizer`,
+  on branch `feat/apertus-2-text-tokenizers` at `d00a5c1`. The duplicate checkout
+  was consolidated on October 6, preserving local files, including `future.md`,
+  and backup branches. `tokenizers/Apertus_2` is the byte-identical
   `preliminary_mul_200k` source from `swiss-ai/apertus-tokenizer-development`
   revision `28ad57a2757f6f72edb0def57ee725b6812f2df3`; its tokenizer SHA-256 is
   `cd403d3f219e2433e3f78b32644b8e6a6134668e15138e6546360330635a96b9`.
   `tokenizers/Apertus_2_instruct` exposes named HF control roles at IDs
   7/8 (input), 10/11 (output), 9 (header), 12 (wait), and 3 (pad), and disables
   text rewriting/automatic BOS/EOS. No binding manifest is needed. Both have
-  200,064 tokens, unchanged BPE merges and no appended media vocabulary. Deterministic rebuild, provenance and deployment tests accompany
-  the artifacts; generation settings are validated without overwriting
-  checkpoint-specific sampling defaults.
+  200,064 tokens, unchanged BPE merges and no appended media vocabulary.
+  Compared with the base, instruct moves the PII tokens from IDs 24-26 to 4-6,
+  drops the NFC normalizer and declares `generation_config.json` EOS `[12, 2]`
+  (`<|wait|>`, `</s>`). Deterministic rebuild, provenance and deployment tests
+  accompany the artifacts; generation settings are validated without
+  overwriting checkpoint-specific sampling defaults.
 - `tokenizer`: retained historical prototype on PR #34's multimodal branch
-  `v2-on-pr24` (`ba648ff`). Its 335,232-token interaction artifact is superseded
-  for this text-only integration by `tokenizer-text/tokenizers/Apertus_2_instruct`.
+  `v2-on-pr24` (`ba648ff`). PR #34 was closed unmerged on October 2 because
+  multimodal is not planned for Apertus 2. Its 335,232-token interaction
+  artifact is superseded by `tokenizer-text/tokenizers/Apertus_2_instruct`.
 - `transformers` at `166bf9ea17e6052be11680cd3ae888d103bcddf6`:
-  `ApertusCommonBackend`, native/token response handling and seven actual CPU
+  `ApertusCommonBackend`, native/token response handling and eight CPU
   integration tests. It exposes native conversations and OpenAI mapping
-  without Jinja or implicit conformance checks.
+  without Jinja or implicit conformance checks. It loads the fast tokenizer
+  directly and saves the artifact's named roles, so `AutoTokenizer` reloads
+  saved directories without the removed `apertus_encoding.json` sidecar.
 - `vllm` at `806a65923b6c3ced8d933abfbd744834ca7bad88`:
   registered tokenizer/renderer and unified reasoning/tool parser,
   token-ID projection and request masking. CPU tests exercise actual framework
   request, renderer and parser classes. GPU/HTTP generation is not verified.
 
-The original related checkouts and the specification remain unchanged. The
-text-only tokenizer branch is committed and pushed as
+The original tokenizer checkout now owns the text-only work; the specification
+and original framework checkouts remain unchanged. The tokenizer branch is
+committed and pushed as
 [PR #35](https://github.com/swiss-ai/apertus-omni-tokenizer/pull/35) against
 `main`; framework changes remain local and unmerged. The tokenizer README and
 framework `APERTUS2_INTEGRATION.md` files record commands and limitations;
 the tested dependency overlay is retained alongside them as `framework-deps`.
 
-Verification on October 2, 2026: `make all` passes 304 tests, strict mypy and
-pyright, 100% exported-type completeness, 17 rule invariants and execution/type
-checking of all four notebooks. The real-artifact and harness targets pass.
-The `0.2.0` wheel and source distribution build successfully; the installed
-wheel passes the same 304 tests and model/parser imports leave `tokenizers` and
-`jsonschema` unloaded. Independent final library and framework reviews report
-no unresolved important findings within this tested scope. Seven Transformers
-and six vLLM CPU tests pass; these do not satisfy the remaining engine/HTTP gates.
-The added Transformers case exercises two actual generations through a tool-call/
-result round trip using the real tokenizer and a tiny random model with controlled
+Initial verification on October 6, 2026 (tokenizer `d00a5c1`; library with the
+decisions recorded below): `make all` passes 323 tests, strict mypy and
+pyright, 100% exported-type completeness, 17 rule invariants and execution/type checking of all four
+notebooks. `make check-artifact` and `make harness` pass with the PR #35
+instruct artifact. The `0.2.0` wheel and source distribution build; the
+installed wheel passes the same 323 tests and model/parser imports leave
+`tokenizers` and `jsonschema` unloaded.
+
+A follow-up repository review on October 6 fixed empty call names reaching
+streaming events before rejection: both parsers now fail at the header delimiter
+with `INVALID_HEADER`. Text/token regressions bring `make all` to 325 passing
+tests, with the same typing, API and notebook gates. The review also strengthened
+expected-error assertions in the examples and reconciled the design docs with
+BOS, checkpoint and mapping behavior. All five README/design Python examples
+execute with the real instruct artifact. Real-artifact and harness checks pass;
+wheel and source builds pass. External framework suites were not rerun in this
+follow-up review.
+
+Framework CPU suites against these revisions, after updating the adapters for
+BOS, claim omission, the sidecar-free artifact and the vLLM fixes below: eight
+Transformers and thirteen vLLM tests pass. These suites do not satisfy the engine/HTTP gates. The Transformers
+round-trip case exercises two actual generations through a tool-call/result
+round trip using the real tokenizer and a tiny random model with controlled
 logits. It does not verify a trained Apertus checkpoint.
 
 Local engine probing reports macOS ARM, vLLM `UnspecifiedPlatform`, no compiled
@@ -844,24 +888,95 @@ not performance guarantees or measurements of native tokenizer allocations.
 
 ### External dependencies and release gates
 
-- **Apertus 2 tokenizer rollout:** review and merge the independent text-only
-  base/instruct PR, then release its artifacts. The library and both CPU adapter
-  suites pass with the 200,064-token instruct artifact. PR #34's multimodal
-  extension is separate work, not a dependency. No tokenizer files are vendored
-  into this library.
+- **Apertus 2 tokenizer rollout ([#1139](https://github.com/swiss-ai/apertus-program/issues/1139)):**
+  PR #35 is open with passing CI and requested reviews from robmsmt and
+  cimeister. Before merging, settle the special-token layout (PII placement,
+  see decisions below). Then release the artifacts and verify the library
+  against the published files. No tokenizer files are vendored into this
+  library.
 - **Message-boundary suspension:** the format says the engine stops only at
   `<|wait|>`, while the planned stateless vLLM implementation suspends requests
-  at `<|/out|>`. Treat request suspension as distinct from ending a logical
-  burst, but obtain upstream clarification of that interpretation through
-  program issues #765/#1128 before declaring this integration conformant.
-  Do not modify the read-only spec or silently weaken the requirement. Core
-  library work proceeds independently.
+  at `<|/out|>`. The spec author's
+  [#765 position](https://github.com/swiss-ai/apertus-program/issues/765#issuecomment-5233355020)
+  calls `<|/out|>` in the engine stop list a broken configuration: the harness
+  streams, and cancels and resubmits at a message boundary only when input is
+  pending. Adopt that model or obtain explicit approval for stop-and-resubmit
+  before declaring the integration conformant. Do not modify the read-only spec.
 - **Framework rollout and release:** benchmarks, wheel/source builds, installed
-  package checks and lightweight import checks have passed as recorded above.
-  Finalize the external changes and verify actual Apertus model generation,
-  closing-token retention, mask enforcement and native continuation through
-  vLLM's engine/HTTP path before declaring serving conformance. Publish only
-  after the remaining rollout gates pass; unavailable checks remain pending.
+  package checks and lightweight import checks pass as recorded above. Resolve
+  the framework findings below, pin tested library and tokenizer revisions, and
+  verify actual Apertus model generation, closing-token retention, mask
+  enforcement and native continuation through vLLM's engine/HTTP path before
+  declaring serving conformance. Publish only after the remaining rollout gates
+  pass; unavailable checks remain pending.
+
+### Open findings from the October 6 review
+
+A report-only review compared the library with the profile at `85874b8`, the
+tokenizer at `d00a5c1` and both framework checkouts. Upstream `v1` (`591701c`)
+has no profile changes since `85874b8`.
+
+**Library and profile alignment:**
+
+- No loss-mask/segment helper for post-training data.
+
+**Framework adapters:**
+
+- Transformers: rebase onto the current fork head and re-verify.
+- vLLM: core-file edits remain (registry entries, the parser-manager branch,
+  the always-adjust hook, the startup flag check and the batch request reuse);
+  propose generic hooks when upstreaming. Unverified performance: requests
+  carry about 200,000 allowed token IDs, and the backend uses vLLM's slow
+  incremental detokenizer.
+- Both: replace the uncommitted library state recorded in
+  `APERTUS2_INTEGRATION.md` with a pinned library commit once committed.
+
+**Decisions after the review (October 6):**
+
+- Resolved library findings: empty document `from`/`id` and empty tool,
+  `call` and `result` names are rejected structurally (`native-v1.schema.json`
+  adds `minLength: 1`; checker evidence rejects empty names and document IDs), a wait directly
+  after a wait without new input is a `conversation/wait` violation, the
+  empty-assistant mapping reports a diagnostic, the unused `HeaderError` is
+  removed, and literal fixtures cover `result`, `think`, `claim` and unknown
+  outputs with headers.
+- Resolved vLLM findings: library errors become `ValueError` (HTTP 400), null
+  tool fields and `strict: false` are accepted, the batch endpoint builds
+  sampling parameters from the adjusted requests, startup requires
+  `--tokenizer-mode apertus2` with `--tool-call-parser apertus2` and
+  `--enable-auto-tool-choice`, and output cut off inside a message returns the
+  completed messages with a warning while malformed framing still fails.
+
+- Serving does not consume claims: both adapters map output with
+  `MappingPolicy(omit_claims=True)`, the profile's inert behaviour. Transformers
+  reports `claim-omitted` as a `UserWarning`; vLLM logs it at debug level.
+  Exposing claims through an OpenAI extension field for RL or grading is
+  recorded in the local `future.md`.
+
+- The system JSON always contains `tools`, an empty array when no tools are
+  declared, matching the profile example. Implemented with a literal fixture;
+  the profile wording is proposed in
+  [spec PR #11](https://github.com/swiss-ai/apertus-2-format-spec-proposal/pull/11).
+- The library targets post-training only. The checker's `pretraining` purpose
+  is removed: documents always require provenance and complete histories a
+  system prompt. Pretraining-only gaps (raw-text scoring framing, document
+  BOS/EOS wrapping) are out of scope.
+- `encode_conversation` starts with the tokenizer's BOS (`<s>`, ID 1 in the
+  instruct artifact); no EOS is added. Spec PR #11 adds this to the profile in a
+  separate commit and lets a profile keep a leading BOS in the format text.
+- The instruct `generation_config.json` keeps `</s>` as a second stop for now.
+  Library constraints still use `<|wait|>` as EOS and forbid `</s>`, so masked
+  generation cannot emit it; unmasked HF `generate` can stop on it.
+- PII placement: keeping `<iban-pii>`, `<email-pii>` and `<ip-pii>` at base
+  IDs 24-26 with the controls at 7-12 (`<|out|>`/`<|/out|>` at the base
+  assistant IDs 10/11) is feasible. A prototype build passes `make
+  check-artifact` and `make harness` with unchanged control and golden IDs;
+  reserved slots become 4-6, 13-23 and the contiguous 27-123. Adopting it
+  changes the tokenizer recipe and needs the PR #35 reviewers' agreement.
+
+**Upstream questions:** the counter after an invalid counter ("next unused").
+Spec PR #11 also removes padding spaces from profile example payloads and points
+the one-token claims at the PR #35 artifact.
 
 ## Module and API conventions
 

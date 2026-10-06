@@ -57,7 +57,7 @@ def main() -> None:
             from apertus_common import ApertusEncoding, load_encoding
 
             encoding = load_encoding(options.artifact)
-            tokens = encoding.encode_conversation(conversation)
+            tokens = encoding.encode_items(conversation.items)
             for chunk_size in (len(tokens), 1, 32):
 
                 def parse_tokens(

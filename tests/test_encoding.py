@@ -24,11 +24,13 @@ from apertus_common import (
     PayloadDelta,
     Reply,
     StreamParseError,
+    SystemPrompt,
     Think,
     TokenizerError,
     UnknownOutput,
     Wait,
     load_encoding,
+    render_str,
 )
 
 CONTROLS = [
@@ -40,6 +42,7 @@ CONTROLS = [
     "<|wait|>",
     "<|pad|>",
 ]
+BOS = "<s>"
 ROLES = dict(
     zip(
         (
@@ -62,7 +65,7 @@ def write_state(directory, state):
 
 @pytest.fixture
 def artifact(tmp_path):
-    specials = [*CONTROLS, "<|other|>"]
+    specials = [*CONTROLS, "<|other|>", BOS]
     alphabet = sorted(pre_tokenizers.ByteLevel.alphabet())
     vocab = {token: index for index, token in enumerate([*specials, *alphabet, "l{"])}
     tokenizer = Tokenizer(models.BPE(vocab=vocab, merges=[("l", "{")]))
@@ -77,6 +80,7 @@ def artifact(tmp_path):
         tokenizer_object=tokenizer,
         extra_special_tokens=ROLES,
         pad_token=CONTROLS[-1],
+        bos_token=BOS,
         clean_up_tokenization_spaces=False,
     )
     hf.save_pretrained(tmp_path)
@@ -145,9 +149,9 @@ def test_roundtrip_reconstructs_without_running_checks(encoding):
             Wait(),
         ]
     )
-    ids = encoding.encode_conversation(expected)
+    ids = encoding.encode_items(iter(expected.items))
     assert encoding.parse_output(ids) == expected
-    assert encoding.encode_items(iter(expected.items)) == ids
+    assert encoding.encode_conversation(expected) == [encoding.bos_token_id, *ids]
     for chunk_size in [1, 2, 7, len(ids)]:
         parser = encoding.output_parser()
         events = []
@@ -163,12 +167,47 @@ def test_roundtrip_reconstructs_without_running_checks(encoding):
         assert parser.last_valid_boundary == len(ids)
 
 
+def test_conversation_starts_with_bos_and_items_never_add_it(encoding):
+    conversation = Conversation(
+        system=SystemPrompt.build(), items=[Reply(payload="<s> stays text")]
+    )
+    ids = encoding.encode_conversation(conversation)
+    assert ids[0] == encoding.bos_token_id == encoding.token_to_id(BOS)
+    assert ids.count(encoding.bos_token_id) == 1
+    assert encoding.decode_text(ids[1:]) == render_str(conversation)
+    assert encoding.bos_token_id not in encoding.encode_items(conversation.items)
+    assert encoding.bos_token_id in encoding.generation_constraints.forbidden_token_ids
+
+
+@pytest.mark.parametrize("value", [None, "<|in|>", "<not-registered>"])
+def test_missing_or_control_bos_rejected(artifact, value):
+    tokenizer = AutoTokenizer.from_pretrained(artifact, local_files_only=True)
+    tokenizer.bos_token = value
+    with pytest.raises(TokenizerError, match="bos_token"):
+        load_encoding(tokenizer)
+
+
 def test_header_text_is_encoded_as_one_run(encoding):
     call = Call(name="x", counter=0, payload="{}")
     ids = encoding.encode_items([call])
     end = ids.index(encoding.controls.header_end)
     assert ids[1:end] == encoding.encode_text('call{"name":"x","counter":0}')
     assert encoding.token_to_id("l{") in ids[1:end]
+
+
+def test_empty_call_name_fails_at_header_token_without_events(encoding):
+    parser = encoding.output_parser()
+    parser.push_tokens(
+        [
+            encoding.controls.output_start,
+            *encoding.encode_text('call{"name":"","counter":0}'),
+        ]
+    )
+    with pytest.raises(StreamParseError) as caught:
+        parser.push_tokens([encoding.controls.header_end])
+    assert caught.value.reason is ParseFailure.INVALID_HEADER
+    assert parser.current is None
+    assert parser.take_events() == []
 
 
 def test_unicode_split_emits_no_replacement_text(encoding):
@@ -238,7 +277,7 @@ def test_wait_finish_and_later_push(encoding):
 @pytest.mark.parametrize("close", [False, True])
 def test_incomplete_unicode_is_terminal_with_safe_recovery(encoding, close):
     completed = Conversation(items=[Reply(payload="safe")])
-    original = encoding.encode_conversation(completed)
+    original = encoding.encode_items(completed.items)
     parser = encoding.output_parser()
     parser.push_tokens(original)
     parser.push_tokens(

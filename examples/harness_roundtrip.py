@@ -2,8 +2,11 @@
 
 A native vLLM completions caller sends the entire retained prompt on every
 request, enables token-ID responses, applies the special-ID mask and suspends
-at output_end. Wait remains EOS. Message-end request suspension still needs
-upstream specification clarification before production rollout.
+at output_end. Wait remains EOS. The spec author's position in apertus-program
+#765 is that only wait belongs in the engine stop list and the harness cancels
+at a message boundary only when input is pending; aligning this request
+strategy is an open release gate in DEVELOPMENT.md. The continuation mechanics
+shown here apply to both strategies.
 """
 
 from __future__ import annotations
@@ -66,7 +69,7 @@ def main() -> None:
     with_input = continuation + encoding.encode_items(queued)
     assert with_input[: len(continuation)] == continuation
 
-    # A logical wait always requires new input, even with pending tool calls.
+    # A logical wait requires new input before further output.
     ended = encoding.parse_output(
         encoding.encode_items([Reply(payload="Done"), Wait()])
     )
@@ -74,7 +77,7 @@ def main() -> None:
         system=history.system,
         items=[*history.items, *ended.items, Think(payload="Unprompted")],
     ).check()
-    assert not invalid_resume.ok
+    assert [error.rule for error in invalid_resume.errors] == ["conversation/wait"]
 
     # A malformed suffix is discarded at the parser's completed-message boundary.
     broken = [

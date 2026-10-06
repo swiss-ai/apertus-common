@@ -24,7 +24,7 @@ from apertus_common.model import (
 
 class ConversationChecker(Checker):
     rules: ClassVar[tuple[Rule, ...]] = (
-        Rule("conversation/system", "serving histories have a system prompt"),
+        Rule("conversation/system", "complete histories have a system prompt"),
         Rule("conversation/declared-tool", "calls name a declared tool"),
         Rule(
             "conversation/counter", "calls use consecutive conversation-wide counters"
@@ -38,7 +38,10 @@ class ConversationChecker(Checker):
             "explicit host closures close matching pending calls",
         ),
         Rule("conversation/document-id", "document IDs are unique across the history"),
-        Rule("conversation/wait", "output after a wait requires intervening input"),
+        Rule(
+            "conversation/wait",
+            "output or another wait after a wait requires intervening input",
+        ),
         Rule(
             "conversation/claim-placement",
             "claims normally precede the replies they support",
@@ -53,16 +56,12 @@ class ConversationChecker(Checker):
         ctx = current.context
         checkpoint = ctx.checkpoint
         complete = ctx.history == "complete"
-        if (
-            not current.standalone
-            and ctx.purpose == "serving"
-            and current.system is None
-        ):
+        if not current.standalone and current.system is None:
             if complete:
                 yield self.violation(
                     "conversation/system",
                     Location("system"),
-                    "serving history requires a system prompt",
+                    "a complete history requires a system prompt",
                 )
             else:
                 yield Unevaluated(
@@ -96,6 +95,18 @@ class ConversationChecker(Checker):
             closures.setdefault((closure.source, closure.item), []).append(closure)
         for item, location in current.items:
             if isinstance(item, Wait):
+                if waiting is True:
+                    yield self.violation(
+                        "conversation/wait",
+                        location,
+                        "wait follows wait without new input",
+                    )
+                elif waiting is None:
+                    yield Unevaluated(
+                        "conversation/wait",
+                        location,
+                        "waiting state before this fragment is unavailable",
+                    )
                 waiting = True
                 reply_seen = False
                 continue

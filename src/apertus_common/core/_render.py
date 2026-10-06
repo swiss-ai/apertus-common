@@ -46,11 +46,10 @@ def to_wire(conversation: Conversation) -> tuple[WireAtom, ...]:
     """Emit envelopes without synthetic whitespace, waits, or sorting."""
     atoms: list[WireAtom] = []
     if conversation.system is not None:
+        # `tools` is always present; an empty array means no tools.
         system = conversation.system.model_dump(
             mode="json", by_alias=True, exclude_none=True
         )
-        if not system["tools"]:
-            del system["tools"]
         atoms.extend(
             (
                 Control(ControlToken.IN),

@@ -4,7 +4,7 @@ from typing import Literal
 
 from pydantic import Field, StrictInt
 
-from apertus_common.model._base import HeaderValue, InputMessage
+from apertus_common.model._base import InputMessage, NonEmptyHeaderValue
 
 
 class Host(InputMessage, frozen=True):
@@ -17,13 +17,13 @@ class User(InputMessage, frozen=True):
 
 class Document(InputMessage, frozen=True):
     type: Literal["document"] = "document"
-    from_: HeaderValue | None = Field(
+    from_: NonEmptyHeaderValue | None = Field(
         default=None, validation_alias="from", serialization_alias="from"
     )
-    id: HeaderValue | None = None
+    id: NonEmptyHeaderValue | None = None
 
 
 class Result(InputMessage, frozen=True):
     type: Literal["result"] = "result"
-    name: HeaderValue
+    name: NonEmptyHeaderValue
     counter: StrictInt

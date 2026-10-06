@@ -26,12 +26,10 @@ class CheckView:
     items: tuple[tuple[Message | Wait, Location], ...]
     tools: tuple[ToolSpec, ...] | None
     standalone: bool
-    purpose_known: bool
 
 
 def view(value: CheckValue, context: CheckContext | None) -> CheckView:
     standalone = not isinstance(value, Conversation)
-    purpose_known = context is not None or not standalone
     ctx = context or CheckContext(history="partial" if standalone else "complete")
     system = ctx.checkpoint.system if ctx.checkpoint else None
     system_location = Location("system", source="checkpoint")
@@ -74,6 +72,4 @@ def view(value: CheckValue, context: CheckContext | None) -> CheckView:
     tools = tuple(system.tools) if system is not None else None
     if isinstance(value, ToolSpec):
         tools = (value,)
-    return CheckView(
-        ctx, system, system_location, tuple(items), tools, standalone, purpose_known
-    )
+    return CheckView(ctx, system, system_location, tuple(items), tools, standalone)

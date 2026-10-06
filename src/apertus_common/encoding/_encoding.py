@@ -132,6 +132,21 @@ class ApertusEncoding:
             controls[glyph] = token_id
         if len(set(controls.values())) != len(_CONTROL_ROLES):
             raise ValueError("control IDs must be distinct integers")
+        # The base model saw BOS at every sequence start; the tokenizer does
+        # not insert it, so conversation encoding does.
+        bos_glyph = getattr(tokenizer, "bos_token", None)
+        bos_id = getattr(tokenizer, "bos_token_id", None)
+        if (
+            not isinstance(bos_glyph, str)
+            or type(bos_id) is not int
+            or backend.token_to_id(bos_glyph) != bos_id
+            or bos_id not in special_ids
+            or bos_id in controls.values()
+        ):
+            raise ValueError(
+                "bos_token must name a registered special token other than a control"
+            )
+        self._bos_id: int = bos_id
         # True disables the added-special matcher; add_special_tokens=False
         # alone only disables postprocessing and does not protect payloads.
         backend.encode_special_tokens = True
@@ -270,6 +285,10 @@ class ApertusEncoding:
         return self._generation_constraints
 
     @property
+    def bos_token_id(self) -> int:
+        return self._bos_id
+
+    @property
     def vocab_size(self) -> int:
         return self._vocab_size
 
@@ -309,6 +328,14 @@ class ApertusEncoding:
         return values
 
     def encode_conversation(self, conversation: Conversation) -> list[int]:
+        """Encode a complete sequence: BOS followed by the conversation."""
+        return [self._bos_id, *self._encode_wire(conversation)]
+
+    def encode_items(self, items: Iterable[ConversationItem]) -> list[int]:
+        """Encode messages and waits that continue a sequence, without BOS."""
+        return self._encode_wire(Conversation(items=list(items)))
+
+    def _encode_wire(self, conversation: Conversation) -> list[int]:
         ids: list[int] = []
         text: list[str] = []
         for atom in to_wire(conversation):
@@ -322,9 +349,6 @@ class ApertusEncoding:
         if text:
             ids.extend(self.encode_text("".join(text)))
         return ids
-
-    def encode_items(self, items: Iterable[ConversationItem]) -> list[int]:
-        return self.encode_conversation(Conversation(items=list(items)))
 
     def output_parser(self) -> TokenStreamParser:
         return TokenStreamParser(self)

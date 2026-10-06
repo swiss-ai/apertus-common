@@ -110,8 +110,14 @@ def _tools(tools: Sequence[Mapping[str, object]]) -> list[ToolSpec]:
         _keys(tool, {"type", "function"}, -1)
         if tool.get("type") != "function":
             raise _fail(-1, "only function tools are supported")
-        function = _object(tool.get("function"), -1)
-        _keys(function, {"name", "description", "parameters"}, -1)
+        function = {
+            key: value
+            for key, value in _object(tool.get("function"), -1).items()
+            if value is not None
+        }
+        _keys(function, {"name", "description", "parameters", "strict"}, -1)
+        if function.get("strict", False) is not False:
+            raise _fail(-1, "strict tool schemas require constrained decoding")
         specs.append(
             _construct(
                 ToolSpec,
@@ -234,6 +240,13 @@ def from_openai(
                 )
             if initial == len(items):
                 items.append(Reply(payload=""))
+                diagnostics.append(
+                    MappingDiagnostic(
+                        "empty-assistant",
+                        index,
+                        "Empty assistant message mapped to an empty reply",
+                    )
+                )
         else:
             raise _fail(index, f"unsupported role {role!r}")
     if assistant_run:

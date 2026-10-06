@@ -2,12 +2,16 @@
 
 from apertus_common import (
     Call,
+    Claim,
     Conversation,
     Document,
     Host,
     Reply,
+    Result,
     SystemPrompt,
+    Think,
     ToolSpec,
+    UnknownOutput,
     User,
     Wait,
     render_str,
@@ -40,6 +44,13 @@ def test_system_is_compact_json_in_regular_input_envelope():
     )
 
 
+def test_system_without_tools_keeps_empty_tools_array():
+    assert (
+        render_str(Conversation(system=SystemPrompt.build()))
+        == '<|in|>system<|hdr|>{"thinking":"medium","tools":[]}<|/in|>'
+    )
+
+
 def test_documents_and_empty_messages_add_no_payload_spaces():
     conversation = Conversation(
         items=[Document(payload="", from_="user", id="a"), Reply(payload="")]
@@ -47,4 +58,22 @@ def test_documents_and_empty_messages_add_no_payload_spaces():
     assert (
         render_str(conversation)
         == '<|in|>document{"from":"user","id":"a"}<|hdr|><|/in|><|out|>reply<|hdr|><|/out|>'
+    )
+
+
+def test_result_think_claim_and_unknown_output_envelopes():
+    conversation = Conversation(
+        items=[
+            Result(name="get_weather", counter=4, payload='{"tempC":24}'),
+            Think(payload="Plan."),
+            Claim(payload='{"x":3}'),
+            UnknownOutput(type="quack", headers={"k": "v"}, payload="x"),
+        ]
+    )
+    assert (
+        render_str(conversation)
+        == '<|in|>result{"name":"get_weather","counter":4}<|hdr|>{"tempC":24}<|/in|>'
+        "<|out|>think<|hdr|>Plan.<|/out|>"
+        '<|out|>claim<|hdr|>{"x":3}<|/out|>'
+        '<|out|>quack{"k":"v"}<|hdr|>x<|/out|>'
     )

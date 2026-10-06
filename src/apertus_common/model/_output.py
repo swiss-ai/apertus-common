@@ -9,8 +9,8 @@ from pydantic import Field, StrictInt, TypeAdapter, field_validator
 
 from apertus_common.model._base import (
     KNOWN_OUTPUT_TYPES,
-    HeaderValue,
     MessageType,
+    NonEmptyHeaderValue,
     OutputMessage,
     check_header_value,
 )
@@ -34,7 +34,7 @@ class Claim(OutputMessage, frozen=True):
 
 class Call(OutputMessage, frozen=True):
     type: Literal["call"] = "call"
-    name: HeaderValue
+    name: NonEmptyHeaderValue
     counter: StrictInt
 
     @classmethod

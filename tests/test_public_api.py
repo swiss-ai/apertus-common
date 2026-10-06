@@ -53,7 +53,6 @@ EXPECTED = {
     "GenerationConstraints",
     "Reply",
     "OpenMessage",
-    "HeaderError",
     "Message",
     "Severity",
     "Violation",

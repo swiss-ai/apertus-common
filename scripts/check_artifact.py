@@ -77,8 +77,9 @@ def check_artifact(directory: Path) -> tuple[int, int]:
         items=[User(payload="Preserve this text: e\u0301")],
     )
     prompt_ids = encoding.encode_conversation(prompt)
+    require(prompt_ids[0] == encoding.bos_token_id, "prompt does not start with BOS")
     require(
-        encoding.decode_text(prompt_ids) == render_str(prompt),
+        encoding.decode_text(prompt_ids[1:]) == render_str(prompt),
         "system/prompt encoding changed wire text",
     )
     output = Conversation(
@@ -90,7 +91,7 @@ def check_artifact(directory: Path) -> tuple[int, int]:
             Wait(),
         ]
     )
-    ids = encoding.encode_conversation(output)
+    ids = encoding.encode_items(output.items)
     require(
         encoding.parse_output(ids) == output, "batch token round trip changed messages"
     )
@@ -123,6 +124,10 @@ def check_artifact(directory: Path) -> tuple[int, int]:
         encoding.encode_items([Reply(payload="Hello"), Wait()])
         == [10, 120213, 9, 36971, 11, 12],
         "pinned production golden IDs changed",
+    )
+    require(
+        encoding.bos_token_id == 1 and encoding.id_to_token(1) == "<s>",
+        "pinned production BOS changed",
     )
     for word in (
         "system",
