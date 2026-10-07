@@ -95,6 +95,31 @@ The metadata never enters headers, payloads or rendered system JSON. Native JSON
 round trips preserve it; text/token parsing cannot recover it. Builders expose
 the same field, including conversation shortcuts.
 
+A complete native conversation can be stored as the following object. For JSONL,
+serialize it onto one physical line with `Conversation.to_json()`:
+
+```json
+{
+  "schema_version": 2,
+  "system": {"thinking": "medium", "tools": []},
+  "items": [
+    {"direction": "in", "type": "user", "payload": "Hello"},
+    {"direction": "out", "type": "reply", "payload": "Hi"},
+    {"type": "wait"}
+  ]
+}
+```
+
+Input conversion must choose source branches and map content to these typed
+messages. Tool calls/results additionally carry top-level `name` and `counter`;
+their payloads remain strings. Tool declarations use native `schema`, not the
+OpenAI `parameters` key. Dataset IDs and annotations belong outside the native
+conversation. Store the JSON string in `conversation_json` for HF or wrapped
+JSONL datasets; a nested conversation object is a different storage layout.
+The standalone pipeline's `apertus2-processing/README.md` documents its supported
+containers and CLI. Encoding this library's models does not establish conformance;
+check the selected data explicitly before encoding it.
+
 ## Explicit checking
 
 `value.check(mode=None, *, checkers=None, context=None)` returns an immutable

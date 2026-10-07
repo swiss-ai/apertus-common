@@ -922,6 +922,17 @@ dataset reports, HF/JSONL readers, HF/Parquet writers, workers, shard manifests,
 resume and optional indexed Megatron export. Existing numbered pipeline stages
 and Megatron training-loader adaptation are outside this change.
 
+Contributor onboarding requires an explicit source-to-native handoff. Existing
+posttraining-data stages 02 and 07 still produce legacy representations; the
+standalone integration does not include a generic converter. Complete required
+curation, branch/mixture selection and metadata-based filtering first, then
+convert before legacy linearization. The integration README owns the stage
+matrix, exact JSONL/HF layouts and fail-on-check-error command examples.
+`examples/write_native_inputs.py` there demonstrates the three storage layouts;
+the library dataset notebook demonstrates native and wrapped JSON round trips.
+Already-native data can enter checking directly. Format conformance does not
+replace recipe-level quality, source or decontamination checks.
+
 Independent review compared 2,000 seeded histories against the previous
 conversation checker and 150 real-tokenizer conversations against baseline
 IDs and independently calculated weights. Review found and fixed original

@@ -115,11 +115,23 @@ invalid artifacts and `ConformanceError` failed checked construction.
 
 ## Data preparation
 
+Start with a dataset-specific conversion to native `Conversation` records. Select
+the intended branches, preserve message/tool-result order, choose system settings
+and assign tool counters from source evidence. Serialize with `.to_json()`.
+Native JSON has `schema_version`, `system` and `items`; OpenAI messages, legacy
+`conversation_branches`/`parts` records and rendered control-token text need
+explicit conversion. See the [native input example](docs/design.md#native-models-and-storage).
+
 Create the tokenizer and checker tuple once per worker, and pass bounded batches
 to `encode_conversations`. Dataset readers, worker pools, reports and resumable
 shards belong to the standalone
 [posttraining-data](https://github.com/swiss-ai/posttraining-data) integration
 in its `apertus2-processing/` directory on `feat/apertus2-data-processing`.
+Its README documents prerequisite pipeline stages, JSONL/HF input layouts and
+the complete check-then-tokenize workflow. For existing pipeline data, convert
+after the recipe's curation/mixture selection and before legacy linearization.
+Already-native data needs no numbered legacy stage. Full format checks do not
+replace source filtering, decontamination or recipe-specific quality selection.
 
 ```python
 from apertus_common import checkers_for
