@@ -104,6 +104,7 @@ class MappingPolicy:
     merge_system_messages: bool = False
     merge_assistant_messages: bool = False
     omit_claims: bool = False
+    omit_loss_weights: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,6 +120,22 @@ class MappingResult[T]:
     value: T
     diagnostics: tuple[MappingDiagnostic, ...]
     context: OpenAIMappingContext
+
+
+def loss_weight_diagnostic(
+    weight: float | None,
+    policy: MappingPolicy,
+    index: int,
+    *,
+    scope: Literal["message", "item", "system"] = "item",
+) -> MappingDiagnostic | None:
+    if weight is None:
+        return None
+    if not policy.omit_loss_weights:
+        raise AdapterError(scope, index, "loss weights have no OpenAI counterpart")
+    return MappingDiagnostic(
+        "loss-weight-omitted", index, "Loss weight omitted from OpenAI mapping", True
+    )
 
 
 class Associations:

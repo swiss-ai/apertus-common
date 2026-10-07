@@ -3,6 +3,7 @@
 from apertus_common.encoding._encoding import (
     ApertusEncoding,
     ControlTokenIds,
+    EncodingResult,
     GenerationConstraints,
     TokenStreamParser,
     load_encoding,
@@ -11,6 +12,7 @@ from apertus_common.encoding._encoding import (
 __all__ = [
     "ApertusEncoding",
     "ControlTokenIds",
+    "EncodingResult",
     "GenerationConstraints",
     "TokenStreamParser",
     "load_encoding",

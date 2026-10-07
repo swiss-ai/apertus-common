@@ -36,6 +36,9 @@ class ModelBuilder[T: Model]:
     def payload(self, value: str) -> Self:
         return self._set("payload", value)
 
+    def loss_weight(self, value: float | None) -> Self:
+        return self._set("loss_weight", value)
+
     def name(self, value: str) -> Self:
         return self._set("name", value)
 
@@ -93,19 +96,30 @@ class ModelBuilder[T: Model]:
     def message(self, value: Message | Wait) -> Self:
         return self.items([*self._values.get("items", ()), value])
 
-    def host(self, payload: str) -> Self:
-        return self.message(Host(payload=payload))
+    def host(self, payload: str, *, loss_weight: float | None = None) -> Self:
+        return self.message(Host(payload=payload, loss_weight=loss_weight))
 
-    def user(self, payload: str) -> Self:
-        return self.message(User(payload=payload))
+    def user(self, payload: str, *, loss_weight: float | None = None) -> Self:
+        return self.message(User(payload=payload, loss_weight=loss_weight))
 
     def document(
-        self, payload: str, *, from_: str | None = None, id: str | None = None
+        self,
+        payload: str,
+        *,
+        from_: str | None = None,
+        id: str | None = None,
+        loss_weight: float | None = None,
     ) -> Self:
-        return self.message(Document(payload=payload, from_=from_, id=id))
+        return self.message(
+            Document(payload=payload, from_=from_, id=id, loss_weight=loss_weight)
+        )
 
-    def result(self, *, name: str, counter: int, payload: str) -> Self:
-        return self.message(Result(name=name, counter=counter, payload=payload))
+    def result(
+        self, *, name: str, counter: int, payload: str, loss_weight: float | None = None
+    ) -> Self:
+        return self.message(
+            Result(name=name, counter=counter, payload=payload, loss_weight=loss_weight)
+        )
 
     def call(
         self,
@@ -114,22 +128,29 @@ class ModelBuilder[T: Model]:
         counter: int,
         payload: str | None = None,
         arguments: Mapping[str, Any] | None = None,
+        loss_weight: float | None = None,
     ) -> Self:
         return self.message(
-            Call.build(name=name, counter=counter, payload=payload, arguments=arguments)
+            Call.build(
+                name=name,
+                counter=counter,
+                payload=payload,
+                arguments=arguments,
+                loss_weight=loss_weight,
+            )
         )
 
-    def think(self, payload: str) -> Self:
-        return self.message(Think(payload=payload))
+    def think(self, payload: str, *, loss_weight: float | None = None) -> Self:
+        return self.message(Think(payload=payload, loss_weight=loss_weight))
 
-    def reply(self, payload: str) -> Self:
-        return self.message(Reply(payload=payload))
+    def reply(self, payload: str, *, loss_weight: float | None = None) -> Self:
+        return self.message(Reply(payload=payload, loss_weight=loss_weight))
 
-    def claim(self, payload: str) -> Self:
-        return self.message(Claim(payload=payload))
+    def claim(self, payload: str, *, loss_weight: float | None = None) -> Self:
+        return self.message(Claim(payload=payload, loss_weight=loss_weight))
 
-    def wait(self) -> Self:
-        return self.message(Wait())
+    def wait(self, *, loss_weight: float | None = None) -> Self:
+        return self.message(Wait(loss_weight=loss_weight))
 
     def build(self, *, check: CheckMode | CheckOptions | None = None) -> T:
         values = dict(self._values)

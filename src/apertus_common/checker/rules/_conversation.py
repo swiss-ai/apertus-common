@@ -89,6 +89,12 @@ class ConversationChecker(Checker):
         waiting = checkpoint.waiting if checkpoint else (False if complete else None)
         reply_seen = False
         closure_uncertain: set[int] = set()
+        pending = {
+            counter for counter, call in calls.items() if call.status == "pending"
+        }
+        # Only newly pending calls need marking at the next ambiguous host item.
+        # Each counter enters this set once, avoiding repeated history scans.
+        unobserved_pending = pending.copy()
         tools = None if current.tools is None else {tool.name for tool in current.tools}
         closures: dict[tuple[str, int | None], list[HostClosure]] = {}
         for closure in ctx.host_closures or ():
@@ -181,6 +187,8 @@ class ConversationChecker(Checker):
                     )
                 if item.counter >= 0 and item.counter not in calls:
                     calls[item.counter] = CallState(item.counter, item.name)
+                    pending.add(item.counter)
+                    unobserved_pending.add(item.counter)
                 next_counter = max(item.counter + 1, next_counter or 0)
             elif isinstance(item, Result):
                 call = calls.get(item.counter)
@@ -222,20 +230,17 @@ class ConversationChecker(Checker):
                             "an earlier host item may already have closed this call",
                         )
                     calls[item.counter] = CallState(item.counter, item.name, "result")
+                    pending.discard(item.counter)
+                    unobserved_pending.discard(item.counter)
             elif isinstance(item, Host):
-                if ctx.host_closures is None:
-                    pending = {
-                        counter
-                        for counter, call in calls.items()
-                        if call.status == "pending"
-                    }
-                    if pending or not calls_known:
-                        yield Unevaluated(
-                            "conversation/host-closure",
-                            location,
-                            "host closure metadata is unavailable",
-                        )
-                        closure_uncertain.update(pending)
+                if ctx.host_closures is None and (pending or not calls_known):
+                    yield Unevaluated(
+                        "conversation/host-closure",
+                        location,
+                        "host closure metadata is unavailable",
+                    )
+                    closure_uncertain.update(unobserved_pending)
+                    unobserved_pending.clear()
                 for closure in closures.get((location.source, location.item), ()):
                     call = calls.get(closure.counter)
                     if call is None:
@@ -265,3 +270,5 @@ class ConversationChecker(Checker):
                         calls[closure.counter] = CallState(
                             closure.counter, closure.name, "host-closed"
                         )
+                        pending.discard(closure.counter)
+                        unobserved_pending.discard(closure.counter)

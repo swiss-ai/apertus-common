@@ -17,6 +17,7 @@ from apertus_common.formats._types import (
     OpenAIDelta,
     OpenAIMappingContext,
     OpenAIToolCall,
+    loss_weight_diagnostic,
 )
 from apertus_common.model import Call
 from apertus_common.parsing import (
@@ -167,6 +168,15 @@ class OpenAIStreamMapper:
                 ]
             return []
         assert isinstance(event, MessageCompleted)
+        try:
+            diagnostic = loss_weight_diagnostic(
+                event.message.loss_weight, self._policy, event.index
+            )
+        except AdapterError:
+            self._failed = True
+            raise
+        if diagnostic is not None:
+            self._diagnostics.append(diagnostic)
         text = "".join(self._parts)
         if event.message.type != kind or event.message.payload != text:
             self._fail("completed message differs from its provisional events")

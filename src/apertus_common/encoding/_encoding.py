@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import codecs
 import json
+import re
 from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Literal, cast, overload
 
 from apertus_common.core._lexeme import ControlLexeme, Lexeme, SourceSpan, TextLexeme
 from apertus_common.core._render import to_wire
@@ -54,6 +55,18 @@ class GenerationConstraints:
     forbidden_token_ids: tuple[int, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class EncodingResult:
+    """Token IDs and unshifted training weights, aligned one-to-one.
+
+    Weights describe the token at the same index, before any training-time
+    label shift, padding or packing. The returned lists are caller-owned.
+    """
+
+    token_ids: list[int]
+    loss_weights: list[float]
+
+
 def _byte_alphabet() -> dict[str, int]:
     values = list(range(33, 127)) + list(range(161, 173)) + list(range(174, 256))
     result = {chr(value): value for value in values}
@@ -66,6 +79,8 @@ def _byte_alphabet() -> dict[str, int]:
 
 
 _BYTE_ALPHABET = _byte_alphabet()
+_SURROGATES = re.compile(r"[\ud800-\udfff]")
+type _Run = tuple[int | str, float]
 
 
 class ApertusEncoding:
@@ -308,9 +323,7 @@ class ApertusEncoding:
         return self._backend.id_to_token(token_id)
 
     def encode_text(self, text: str) -> list[int]:
-        if not isinstance(cast(object, text), str) or any(
-            0xD800 <= ord(char) <= 0xDFFF for char in text
-        ):
+        if not isinstance(cast(object, text), str) or _SURROGATES.search(text):
             raise TokenizerError("text must contain Unicode scalar values")
         ids = self._backend.encode(text, add_special_tokens=False).ids
         if not self._special_ids.isdisjoint(ids):
@@ -327,28 +340,152 @@ class ApertusEncoding:
             raise TokenizerError("unknown or invalid token ID")
         return values
 
-    def encode_conversation(self, conversation: Conversation) -> list[int]:
-        """Encode a complete sequence: BOS followed by the conversation."""
-        return [self._bos_id, *self._encode_wire(conversation)]
+    @overload
+    def encode_conversation(
+        self, conversation: Conversation, *, return_loss_weights: Literal[False] = False
+    ) -> list[int]: ...
 
-    def encode_items(self, items: Iterable[ConversationItem]) -> list[int]:
-        """Encode messages and waits that continue a sequence, without BOS."""
-        return self._encode_wire(Conversation(items=list(items)))
+    @overload
+    def encode_conversation(
+        self, conversation: Conversation, *, return_loss_weights: Literal[True]
+    ) -> EncodingResult: ...
 
-    def _encode_wire(self, conversation: Conversation) -> list[int]:
-        ids: list[int] = []
+    @overload
+    def encode_conversation(
+        self, conversation: Conversation, *, return_loss_weights: bool
+    ) -> list[int] | EncodingResult: ...
+
+    def encode_conversation(
+        self, conversation: Conversation, *, return_loss_weights: bool = False
+    ) -> list[int] | EncodingResult:
+        """Encode a complete sequence, starting with a zero-weight BOS."""
+        return self._encode_wire(conversation, True, return_loss_weights)
+
+    @overload
+    def encode_items(
+        self,
+        items: Iterable[ConversationItem],
+        *,
+        return_loss_weights: Literal[False] = False,
+    ) -> list[int]: ...
+
+    @overload
+    def encode_items(
+        self, items: Iterable[ConversationItem], *, return_loss_weights: Literal[True]
+    ) -> EncodingResult: ...
+
+    @overload
+    def encode_items(
+        self, items: Iterable[ConversationItem], *, return_loss_weights: bool
+    ) -> list[int] | EncodingResult: ...
+
+    def encode_items(
+        self, items: Iterable[ConversationItem], *, return_loss_weights: bool = False
+    ) -> list[int] | EncodingResult:
+        """Encode continuation messages and waits, without BOS."""
+        return self._encode_wire(
+            Conversation(items=list(items)), False, return_loss_weights
+        )
+
+    @overload
+    def encode_conversations(
+        self,
+        conversations: Sequence[Conversation],
+        *,
+        return_loss_weights: Literal[False] = False,
+    ) -> list[list[int]]: ...
+
+    @overload
+    def encode_conversations(
+        self,
+        conversations: Sequence[Conversation],
+        *,
+        return_loss_weights: Literal[True],
+    ) -> list[EncodingResult]: ...
+
+    @overload
+    def encode_conversations(
+        self, conversations: Sequence[Conversation], *, return_loss_weights: bool
+    ) -> list[list[int]] | list[EncodingResult]: ...
+
+    def encode_conversations(
+        self,
+        conversations: Sequence[Conversation],
+        *,
+        return_loss_weights: bool = False,
+    ) -> list[list[int]] | list[EncodingResult]:
+        """Batch ordinary-text runs without changing scalar token boundaries.
+
+        Each result starts with BOS. Callers choose batch sizes to bound memory;
+        this method performs no conformance checks, padding or packing.
+        """
+        runs = [list(self._wire_runs(conversation)) for conversation in conversations]
+        texts = [
+            value
+            for sequence in runs
+            for value, _ in sequence
+            if isinstance(value, str)
+        ]
+        encoded = (
+            self._backend.encode_batch_fast(texts, add_special_tokens=False)
+            if texts
+            else []
+        )
+        text_ids = iter(item.ids for item in encoded)
+        results = [
+            self._assemble(sequence, text_ids, True, return_loss_weights)
+            for sequence in runs
+        ]
+        return cast("list[list[int]] | list[EncodingResult]", results)
+
+    def _wire_runs(self, conversation: Conversation) -> Iterator[_Run]:
         text: list[str] = []
+        weight = 0.0
         for atom in to_wire(conversation):
             if isinstance(atom, Control):
                 if text:
-                    ids.extend(self.encode_text("".join(text)))
+                    yield "".join(text), weight
                     text.clear()
-                ids.append(self._control_ids[atom.token])
+                yield self._control_ids[atom.token], atom.loss_weight
             else:
                 text.append(atom.text)
+                weight = atom.loss_weight
         if text:
-            ids.extend(self.encode_text("".join(text)))
-        return ids
+            yield "".join(text), weight
+
+    def _encode_wire(
+        self, conversation: Conversation, bos: bool, return_loss_weights: bool
+    ) -> list[int] | EncodingResult:
+        runs = list(self._wire_runs(conversation))
+        text_ids = (
+            self._backend.encode(value, add_special_tokens=False).ids
+            for value, _ in runs
+            if isinstance(value, str)
+        )
+        return self._assemble(runs, text_ids, bos, return_loss_weights)
+
+    def _assemble(
+        self,
+        runs: Iterable[_Run],
+        text_ids: Iterator[list[int]],
+        bos: bool,
+        return_loss_weights: bool,
+    ) -> list[int] | EncodingResult:
+        ids = [self._bos_id] if bos else []
+        weights = [0.0] if bos and return_loss_weights else []
+        for value, weight in runs:
+            if isinstance(value, int):
+                ids.append(value)
+                if return_loss_weights:
+                    weights.append(weight)
+            else:
+                tokens = next(text_ids)
+                if not self._special_ids.isdisjoint(tokens):
+                    raise TokenizerError("ordinary text encoded to a special ID")
+                ids.extend(tokens)
+                if return_loss_weights:
+                    weights.extend([weight] * len(tokens))
+        return EncodingResult(ids, weights) if return_loss_weights else ids
 
     def output_parser(self) -> TokenStreamParser:
         return TokenStreamParser(self)

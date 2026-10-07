@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from typing import cast
 
 from pydantic import BaseModel, ValidationError
@@ -19,6 +20,7 @@ from apertus_common.formats._types import (
     OpenAIMessage,
     OpenAIRequest,
     OpenAITool,
+    loss_weight_diagnostic,
 )
 from apertus_common.model import (
     Call,
@@ -267,7 +269,9 @@ def from_openai(
             else dict(system_defaults or {})
         )
         _keys(
-            settings, {"thinking", "behavior", "identity", "environment", "tools"}, -1
+            settings,
+            {"thinking", "behavior", "identity", "environment", "tools", "loss_weight"},
+            -1,
         )
         supplied: dict[str, object] = {}
         if leading:
@@ -305,10 +309,15 @@ def to_openai_output(
         raise AdapterError(
             "system", -1, "output fragment must not contain a system prompt"
         )
+    policy = policy or MappingPolicy()
     mapper = OpenAIStreamMapper(context, policy)
+    diagnostics: list[MappingDiagnostic] = []
     ordinal = 0
     for index, item in enumerate(output.items):
         if isinstance(item, Wait):
+            diagnostic = loss_weight_diagnostic(item.loss_weight, policy, index)
+            if diagnostic is not None:
+                diagnostics.append(diagnostic)
             mapper.push(WaitReached())
             continue
         if not isinstance(item, OutputMessage):
@@ -323,8 +332,10 @@ def to_openai_output(
         mapper.push(MessageStart(ordinal, item.type, headers))
         mapper.push(PayloadDelta(ordinal, item.payload))
         mapper.push(MessageCompleted(ordinal, item))
+        diagnostics.extend(mapper.take_diagnostics())
         ordinal += 1
-    return mapper.finish()
+    result = mapper.finish()
+    return MappingResult(result.value, tuple(diagnostics), result.context)
 
 
 def to_openai(
@@ -341,6 +352,11 @@ def to_openai(
     request: OpenAIRequest = {"messages": messages}
     if conversation.system is not None:
         system = conversation.system
+        diagnostic = loss_weight_diagnostic(
+            system.loss_weight, policy, -1, scope="system"
+        )
+        if diagnostic is not None:
+            diagnostics.append(diagnostic)
         if (
             system.identity is not None
             or system.environment is not None
@@ -371,6 +387,7 @@ def to_openai(
             )
         request["tools"] = tools
     run: list[ConversationItem] = []
+    run_indices: list[int] = []
     last_kind = -1
     after_wait = False
     seen_counters: set[int] = set()
@@ -379,18 +396,32 @@ def to_openai(
         nonlocal ids, last_kind
         if not run:
             return
-        result = to_openai_output(
-            Conversation(items=list(run)), context=ids.snapshot(), policy=policy
-        )
+        try:
+            result = to_openai_output(
+                Conversation(items=list(run)), context=ids.snapshot(), policy=policy
+            )
+        except AdapterError as error:
+            if error.where == "item" and 0 <= error.index < len(run_indices):
+                raise AdapterError(
+                    "item", run_indices[error.index], error.reason
+                ) from error
+            raise
         messages.append(cast(OpenAIMessage, result.value))
-        diagnostics.extend(result.diagnostics)
+        diagnostics.extend(
+            replace(diagnostic, index=run_indices[diagnostic.index])
+            for diagnostic in result.diagnostics
+        )
         ids = Associations(result.context)
         run.clear()
+        run_indices.clear()
         last_kind = -1
 
     for index, item in enumerate(conversation.items):
         if isinstance(item, Wait):
             if not run:
+                diagnostic = loss_weight_diagnostic(item.loss_weight, policy, index)
+                if diagnostic is not None:
+                    diagnostics.append(diagnostic)
                 if not policy.merge_assistant_messages:
                     raise AdapterError(
                         "item", index, "bare/consecutive wait cannot be represented"
@@ -400,6 +431,7 @@ def to_openai(
                 )
             else:
                 run.append(item)
+                run_indices.append(index)
                 flush()
             after_wait = True
         elif isinstance(item, (Think, Reply, Call, Claim)):
@@ -431,6 +463,7 @@ def to_openai(
             ):
                 flush()
             run.append(item)
+            run_indices.append(index)
             if not isinstance(item, Claim):
                 last_kind = kind
         else:
@@ -450,6 +483,9 @@ def to_openai(
                     )
                 )
                 flush()
+            diagnostic = loss_weight_diagnostic(item.loss_weight, policy, index)
+            if diagnostic is not None:
+                diagnostics.append(diagnostic)
             after_wait = False
             if isinstance(item, User):
                 messages.append({"role": "user", "content": item.payload})

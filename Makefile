@@ -57,3 +57,11 @@ bench:  ## Measure parser throughput/memory; optionally set APERTUS_ENCODING
 .PHONY: build
 build:  ## Build wheel and source distribution
 	uv build
+
+.PHONY: prepare
+prepare:  ## Run the weighted preparation example (set APERTUS_ENCODING)
+	uv run python examples/prepare_data.py "$(APERTUS_ENCODING)"
+
+.PHONY: bench-prepare
+bench-prepare:  ## Measure data preparation (set APERTUS_ENCODING)
+	uv run python scripts/bench_prepare.py --artifact "$(APERTUS_ENCODING)"

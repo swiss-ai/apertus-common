@@ -29,6 +29,7 @@ from apertus_common.core import (
 from apertus_common.encoding import (
     ApertusEncoding,
     ControlTokenIds,
+    EncodingResult,
     GenerationConstraints,
     TokenStreamParser,
     load_encoding,
@@ -108,6 +109,7 @@ __all__ = [
     "Conversation",
     "ConversationChecker",
     "Document",
+    "EncodingResult",
     "GenerationConstraints",
     "HistoryCheckpoint",
     "Host",

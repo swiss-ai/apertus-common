@@ -17,15 +17,18 @@ from apertus_common.checker.rules._conversation import ConversationChecker
 from apertus_common.checker.rules._profile import ProfileChecker
 
 
-def checkers_for(mode: CheckMode) -> tuple[Checker, ...]:
-    """Fresh stateless checkers; explicit checker lists replace this preset."""
+def checkers_for(
+    mode: CheckMode, *, allow_loss_weights: bool = False
+) -> tuple[Checker, ...]:
+    """Create reusable checkers; explicit checker lists replace this preset."""
+    profile = ProfileChecker(allow_loss_weights=allow_loss_weights)
     match mode:
         case "profile":
-            return (ProfileChecker(),)
+            return (profile,)
         case "conversation":
-            return (ProfileChecker(), ConversationChecker())
+            return (profile, ConversationChecker())
         case "full":
-            return (ProfileChecker(), ConversationChecker(), ArgumentsChecker())
+            return (profile, ConversationChecker(), ArgumentsChecker())
         case _:
             raise ValueError(f"unknown check mode: {mode!r}")
 

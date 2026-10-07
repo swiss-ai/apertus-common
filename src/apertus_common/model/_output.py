@@ -45,6 +45,7 @@ class Call(OutputMessage, frozen=True):
         counter: int,
         payload: str | None = None,
         arguments: Mapping[str, Any] | None = None,
+        loss_weight: float | None = None,
         check: CheckMode | CheckOptions | None = None,
     ) -> Self:
         if (payload is None) == (arguments is None):
@@ -56,7 +57,8 @@ class Call(OutputMessage, frozen=True):
         from apertus_common.model._base import apply_model_check
 
         return apply_model_check(
-            cls(name=name, counter=counter, payload=payload), check
+            cls(name=name, counter=counter, payload=payload, loss_weight=loss_weight),
+            check,
         )
 
 

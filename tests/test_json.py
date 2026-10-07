@@ -27,7 +27,7 @@ def test_full_native_roundtrip():
     assert [type(item) for item in loaded.items] == [
         type(item) for item in conversation.items
     ]
-    assert loaded.schema_version == 1
+    assert loaded.schema_version == 2
 
 
 @pytest.mark.parametrize(
@@ -36,7 +36,7 @@ def test_full_native_roundtrip():
         "{}",
         '{"items":[]}',
         '{"schema_version":true}',
-        '{"schema_version":2}',
+        '{"schema_version":3}',
         '{"schema_version":1,"schema_version":1}',
         '{"schema_version":1,"items":[{"type":"user","payload":"x"}]}',
     ],

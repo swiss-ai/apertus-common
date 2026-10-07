@@ -235,18 +235,20 @@ this API without adding format logic or harness state.
 | --- | --- |
 | `ToolSpec` | `name`, `description`, `json_schema`, optional `policy` |
 | `SystemPrompt` | required `thinking: Thinking`; optional `identity`, `behavior`, `environment`; `tools=()` |
-| `Conversation` | `schema_version: Literal[1]=1`, `system: SystemPrompt \| None=None`, ordered `items=()` |
+| `Conversation` | `schema_version: Literal[2]=2`, `system: SystemPrompt \| None=None`, ordered `items=()` |
 | `Host`, `User` | `payload: str` |
 | `Document` | `payload: str`, `from_: str \| None=None`, `id: str \| None=None` |
 | `Result`, `Call` | `name: str`, `counter: int`, `payload: str` |
 | `Think`, `Reply`, `Claim` | `payload: str` |
 | `UnknownOutput` | unrecognized `type`, parsed `headers`, raw `payload` |
-| `Wait` | no fields; explicit burst boundary |
+| `Wait` | optional `loss_weight`; explicit burst boundary |
 
 `Thinking` contains `LOW`, `MEDIUM`, and `HIGH`. Native JSON uses `schema` for
 `json_schema`, `from` for `from_`, and message type discriminators. Conversation
 items contain input/output messages and waits, never another system prompt.
 `schema_version` versions native storage only and is never encoded into tokens.
+Messages, system prompts and waits have optional finite non-negative
+`loss_weight` metadata. It is omitted when unset and never enters the wire format.
 `system=None` represents a conversation fragment, including parsed output.
 Pretraining records are out of scope: every document requires provenance, and
 a complete history requires a system prompt. Preserve order
@@ -303,7 +305,7 @@ model.to_json() -> str
 
 conversation.check(mode="full", *, checkers=None, context=None) -> ConformanceReport
 message.check(mode="profile", *, checkers=None, context=None) -> ConformanceReport
-checkers_for(mode) -> tuple[Checker, ...]
+checkers_for(mode, *, allow_loss_weights=False) -> tuple[Checker, ...]
 ```
 
 Model methods are the canonical API, with no top-level JSON/check wrappers.
@@ -355,6 +357,9 @@ the harness/tool.
 ```text
 load_encoding(hf_tokenizer_or_local_path) -> ApertusEncoding
 encoding.encode_conversation(conversation) -> list[int]
+encoding.encode_conversations(conversations) -> list[list[int]]
+encoding.encode_conversation(conversation, return_loss_weights=True) -> EncodingResult
+encoding.encode_conversations(conversations, return_loss_weights=True) -> list[EncodingResult]
 encoding.encode_items(items) -> list[int]
 encoding.encode_text(text) -> list[int]
 encoding.decode_text(token_ids) -> str
@@ -518,9 +523,10 @@ discriminators; native message loading requires them. Strict JSON helpers reject
 duplicate keys and non-finite values with Pydantic `ValidationError` diagnostics.
 
 Release as `0.2.0`, with no aliases or automatic conversion for the pilot API,
-old wire grammar, or old JSON. Conversation JSON requires `schema_version: 1`;
-constructors supply it, serializers emit it, and unsupported/missing versions
-fail loading. Standalone messages use the same versioned schema definition
+old wire grammar, or pilot JSON. Native storage now uses `schema_version: 2`;
+constructors supply it and serializers emit it. `Conversation.from_json()`
+upgrades unweighted v1 records; v1 records containing loss annotations and
+unsupported/missing versions fail loading. Standalone messages use the same versioned schema definition
 without repeating a version field on every item. Export the JSON Schema with a
 versioned identifier; future incompatible storage changes increment the version.
 
@@ -569,7 +575,9 @@ every declared schema, even unused ones; report broken schemas separately from
 invalid arguments. `format` remains an annotation, not an implicit format
 checker. Arguments require an object root, reject duplicate keys at every
 depth and non-finite numbers, and receive no coercion/default insertion. Keep
-the raw call payload unchanged. Compile each schema once per check invocation;
+the raw call payload unchanged. Reuse an `ArgumentsChecker` per worker to cache
+compiled schemas and compilation failures in a bounded LRU (256 entries by
+default; zero disables it). Never cache record outcomes or diagnostic locations;
 the parser and encoder never load or invoke schema validators. Business semantics
 and tool execution remain outside the library.
 
@@ -594,7 +602,8 @@ at a message boundary is a parser failure, not silently repaired text.
 
 Native JSON round trips preserve model values, order and raw payloads, not the
 input JSON's whitespace. For a single representable output segment, encoding
-followed by token parsing preserves typed messages and payloads; accepting a
+followed by token parsing preserves wire message content and payloads, excluding
+native-only loss annotations; accepting a
 tokenizer requires proving its ordinary-text path preserves those payloads.
 Parsing arbitrary generated tokens and re-encoding does not promise identical IDs or header key
 ordering. Keep original tokens for generation continuation. Text parsing has
@@ -636,7 +645,9 @@ boundaries cannot survive, require the merging policy there as well. A single
 response or stream cannot preserve every native message boundary: adapters use
 `MappingPolicy(merge_assistant_messages=True)` to concatenate reasoning/reply
 segments and collect calls, reporting lost boundaries/order. An additional
-`omit_claims=True` permits ignoring claims with diagnostics. All policy flags
+`omit_claims=True` permits ignoring claims with diagnostics.
+`omit_loss_weights=True` permits discarding native training annotations with
+diagnostics; otherwise native-to-OpenAI mappings reject them. All policy flags
 default false; host, document, unknown types and other unsupported conversions
 still fail. Streaming diagnostics are drainable immediately and included in
 the final result; streaming failure cannot retract previously emitted deltas.
@@ -792,7 +803,7 @@ of conformance and argument validation. All four notebooks use the new API;
 | Profile responsibility | Owner and acceptance coverage |
 | --- | --- |
 | Seven controls, compact envelopes, system JSON, exact payloads | Models/core; literal fixtures in `test_render.py`, inventory in `test_spec_table.py` |
-| Typed headers, discriminators, immutable native JSON | Models; header/JSON/immutability tests, versioned schema snapshot in `tests/fixtures/native-v1.schema.json` |
+| Typed headers, discriminators, immutable native JSON | Models; header/JSON/immutability tests, current `native-v2.schema.json` snapshot and historical v1 loading tests |
 | Document provenance, unique tools/documents, call/result counters | Explicit profile/conversation checkers; `test_checker.py` and `test_checker_rules.py` |
 | FIFO arrivals, queued-input placement, dispatch and host closures | Harness; order preserved by models/encoding, explicit closure evidence in checks, `examples/harness_roundtrip.py` |
 | Argument object syntax and declared schema | Explicit argument helpers/checker; malformed calls retained by both parsers, checker regressions |
@@ -886,6 +897,49 @@ representation across batch/small-chunk cases. Many-message cases measured
 memory ranged from 1.7 to 34.8 MB. These are local observations from `make bench`,
 not performance guarantees or measurements of native tokenizer allocations.
 
+### Data preparation implementation (October 7)
+
+Native schema v2 adds optional per-message, system and wait `loss_weight`.
+The native loader upgrades unweighted v1 records; annotated v1 records fail.
+Explicit weights require `checkers_for(..., allow_loss_weights=True)` for
+profile acceptance. JSON preserves annotations; wire text and tokens do not.
+OpenAI projection requires `omit_loss_weights=True` to discard them.
+
+`encode_conversations` batches text runs without changing scalar token IDs.
+Conversation/item encoders accept `return_loss_weights=True` and return
+`EncodingResult(token_ids, loss_weights)`; batching returns one result per
+conversation. BOS and all input framing/header tokens always have weight zero.
+Input/system payloads default to zero, complete output frames and waits to one.
+Explicit weights override those payload/frame defaults; each wait is independent.
+Weights are unshifted and packing/padding remain downstream operations.
+
+Reusable `ArgumentsChecker` instances cache up to 256 compiled schemas or
+compilation errors, with fresh per-record diagnostics. Host-history checking
+tracks pending calls incrementally instead of rescanning all prior calls.
+The library remains free of dataset, process-pool and scheduler dependencies.
+The standalone `apertus2-processing/` project in posttraining-data owns full
+dataset reports, HF/JSONL readers, HF/Parquet writers, workers, shard manifests,
+resume and optional indexed Megatron export. Existing numbered pipeline stages
+and Megatron training-loader adaptation are outside this change.
+
+Independent review compared 2,000 seeded histories against the previous
+conversation checker and 150 real-tokenizer conversations against baseline
+IDs and independently calculated weights. Review found and fixed original
+conversation indices in weight-related OpenAI mapping errors. README/design
+examples and the updated notebooks execute with the real instruct tokenizer.
+`make all`, the artifact check, the preparation example and wheel/source builds
+pass. The dataset notebook's tokenizer section requires `APERTUS_ENCODING`;
+without it, structural/checking examples still execute.
+
+`make bench-prepare` reports loading, warm-cache checking, uncached checking,
+scalar/batch encoding and weighted encoding separately. One local run with
+tokenizer parallelism disabled measured about 29,000 checked records/s with
+warm schemas versus 4,300 without caching, and batch encoding about 1.2-1.3
+times scalar throughput on the supplied fixtures. Host histories retained
+roughly constant throughput from 100 to 10,000 call/result/host groups.
+These measurements are illustrative, not performance guarantees; Python peak
+allocation measurements exclude the tokenizer's native allocations.
+
 ### External dependencies and release gates
 
 - **Apertus 2 tokenizer rollout ([#1139](https://github.com/swiss-ai/apertus-program/issues/1139)):**
@@ -918,7 +972,9 @@ has no profile changes since `85874b8`.
 
 **Library and profile alignment:**
 
-- No loss-mask/segment helper for post-training data.
+- Resolved in the data-preparation implementation: optional message weights,
+  aligned encoding weights, batch encoding and reusable schema compilation.
+  Packing and training-loader adaptation remain downstream responsibilities.
 
 **Framework adapters:**
 

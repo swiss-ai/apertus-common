@@ -1,6 +1,7 @@
 """Synthetic ByteLevel unit artifacts; production artifact checks are separate."""
 
 import json
+from unittest.mock import Mock
 
 import pytest
 from tokenizers import (
@@ -17,17 +18,22 @@ from apertus_common import (
     Call,
     Claim,
     Conversation,
+    Document,
+    EncodingResult,
+    Host,
     MessageCompleted,
     ParseBoundary,
     ParseFailure,
     ParserStateError,
     PayloadDelta,
     Reply,
+    Result,
     StreamParseError,
     SystemPrompt,
     Think,
     TokenizerError,
     UnknownOutput,
+    User,
     Wait,
     load_encoding,
     render_str,
@@ -435,3 +441,121 @@ def test_added_only_specials_extend_the_vocabulary(artifact):
     assert (
         encoding.decode_text(encoding.encode_text("<|added-only|>")) == "<|added-only|>"
     )
+
+
+@pytest.mark.parametrize("weight", [None, 0.0, 0.25, 2.0])
+@pytest.mark.parametrize(
+    "message",
+    [
+        User(payload="hé🙂 <|out|>"),
+        Host(payload="hé🙂 <|out|>"),
+        Document(from_="user", id="d", payload="hé🙂 <|out|>"),
+        Result(name="f", counter=0, payload="hé🙂 <|out|>"),
+        Think(payload="hé🙂 <|out|>"),
+        Reply(payload="hé🙂 <|out|>"),
+        Claim(payload="hé🙂 <|out|>"),
+        Call(name="f", counter=-1, payload="hé🙂 <|out|>"),
+        UnknownOutput(type="other", headers={"x": "y"}, payload="hé🙂 <|out|>"),
+    ],
+)
+def test_loss_weights_follow_message_regions_without_changing_tokens(
+    encoding, message, weight
+):
+    weighted = type(message).model_validate(
+        {**message.model_dump(), "loss_weight": weight}
+    )
+    result = encoding.encode_items([weighted], return_loss_weights=True)
+    assert isinstance(result, EncodingResult)
+    assert result.token_ids == encoding.encode_items([message])
+    assert result.token_ids == encoding.encode_items([weighted])
+    assert len(result.loss_weights) == len(result.token_ids)
+    is_input = message.direction == "in"
+    payload_weight = weight if weight is not None else (0.0 if is_input else 1.0)
+    frame_weight = 0.0 if is_input else payload_weight
+    delimiter = result.token_ids.index(encoding.controls.header_end)
+    assert result.loss_weights[: delimiter + 1] == [frame_weight] * (delimiter + 1)
+    assert result.loss_weights[delimiter + 1 : -1] == [payload_weight] * len(
+        encoding.encode_text(message.payload)
+    )
+    assert result.loss_weights[-1] == frame_weight
+
+
+def test_system_weight_never_enters_wire_and_bos_is_zero(encoding):
+    plain = Conversation(system=SystemPrompt.build(behavior="Hello"))
+    weighted = Conversation(
+        system=SystemPrompt(thinking="medium", behavior="Hello", loss_weight=0.5)
+    )
+    result = encoding.encode_conversation(weighted, return_loss_weights=True)
+    assert result.token_ids == encoding.encode_conversation(plain)
+    assert render_str(weighted) == render_str(plain)
+    assert result.loss_weights[:2] == [0.0, 0.0]
+    delimiter = result.token_ids.index(encoding.controls.header_end)
+    assert result.loss_weights[: delimiter + 1] == [0.0] * (delimiter + 1)
+    assert result.loss_weights[delimiter + 1 : -1] == [0.5] * (
+        len(result.token_ids) - delimiter - 2
+    )
+    assert result.loss_weights[-1] == 0.0
+
+
+def test_empty_payloads_and_wait_have_independent_weights(encoding):
+    items = [Reply(payload="", loss_weight=0.0), Wait(), Wait(loss_weight=0.25)]
+    result = encoding.encode_items(iter(items), return_loss_weights=True)
+    assert result.loss_weights == [0.0] * (len(result.token_ids) - 2) + [1.0, 0.25]
+    assert encoding.encode_items([], return_loss_weights=True) == EncodingResult([], [])
+    assert encoding.encode_conversation(
+        Conversation(), return_loss_weights=True
+    ) == EncodingResult([encoding.bos_token_id], [0.0])
+
+
+def test_scalar_weights_use_one_tokenization_per_text_run(encoding):
+    backend = Mock(wraps=encoding._backend)
+    encoding._backend = backend
+    result = encoding.encode_items(
+        [Call(name="f", counter=0, payload="{}", loss_weight=0.5)],
+        return_loss_weights=True,
+    )
+    assert backend.encode.call_count == 2
+    assert backend.encode_batch_fast.call_count == 0
+    assert result.loss_weights == [0.5] * len(result.token_ids)
+
+
+def test_batch_matches_scalar_weighted_and_unweighted_with_single_backend_batch(
+    encoding,
+):
+    conversations = [
+        Conversation(),
+        Conversation(system=SystemPrompt(thinking="high", loss_weight=0.5)),
+        Conversation(
+            items=[User(payload="x", loss_weight=2), Reply(payload="🙂 <|wait|>")]
+        ),
+        Conversation(
+            items=[
+                Call(name="f", counter=-1, payload="not JSON", loss_weight=0.25),
+                Wait(),
+            ]
+        ),
+        Conversation(items=[Wait(loss_weight=0)]),
+    ]
+    scalar_ids = [encoding.encode_conversation(value) for value in conversations]
+    scalar_weighted = [
+        encoding.encode_conversation(value, return_loss_weights=True)
+        for value in conversations
+    ]
+    backend = Mock(wraps=encoding._backend)
+    encoding._backend = backend
+    assert encoding.encode_conversations(conversations) == scalar_ids
+    assert (
+        encoding.encode_conversations(conversations, return_loss_weights=True)
+        == scalar_weighted
+    )
+    assert backend.encode.call_count == 0
+    assert backend.encode_batch_fast.call_count == 2
+    assert (
+        'call{"name":"f","counter":-1}' in backend.encode_batch_fast.call_args.args[0]
+    )
+    assert encoding.encode_conversations([]) == []
+    assert encoding.encode_conversations([], return_loss_weights=True) == []
+    assert encoding.encode_conversations(
+        [Conversation()], return_loss_weights=True
+    ) == [EncodingResult([encoding.bos_token_id], [0.0])]
+    assert backend.encode_batch_fast.call_count == 2

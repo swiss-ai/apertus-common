@@ -56,6 +56,7 @@ rules explicitly. `report.ok` and `report.complete` distinguish errors from
 missing evidence. Builders and `.from_json(..., check="full")` provide opt-in
 checked construction. Native JSON is versioned and lossless; JSONL datasets
 store one conversation per line. The pre-0.2 pilot API and JSON are incompatible.
+New JSON uses schema v2; `Conversation.from_json()` upgrades unweighted v1 data.
 
 ```python
 from apertus_common import from_openai, to_openai
@@ -111,6 +112,42 @@ or argument schemas. Call `.check(context=...)` separately.
 the caller discards the malformed suffix. Pydantic `ValidationError` reports
 invalid native structure, `AdapterError` unsupported mappings, `TokenizerError`
 invalid artifacts and `ConformanceError` failed checked construction.
+
+## Data preparation
+
+Create the tokenizer and checker tuple once per worker, and pass bounded batches
+to `encode_conversations`. Dataset readers, worker pools, reports and resumable
+shards belong to the standalone
+[posttraining-data](https://github.com/swiss-ai/posttraining-data) integration
+in its `apertus2-processing/` directory on `feat/apertus2-data-processing`.
+
+```python
+from apertus_common import checkers_for
+
+checks = checkers_for("full", allow_loss_weights=True)
+weighted = (
+    Conversation.builder()
+    .system(SystemPrompt.build())
+    .user("What is 6 times 7?")
+    .think("Multiply the numbers.", loss_weight=0)
+    .reply("42", loss_weight=1)
+    .wait()
+    .build()
+)
+report = weighted.check(checkers=checks)
+assert report.ok and report.complete
+result = encoding.encode_conversation(weighted, return_loss_weights=True)
+assert len(result.token_ids) == len(result.loss_weights)
+```
+
+Weights are optional native JSON metadata. Default checking rejects explicit
+annotations unless opted in. Missing weights mean output/wait 1 and input/system
+0; input envelopes and headers always have weight 0. Explicit output weights
+cover the whole frame, and waits have their own independent weight. The returned
+vector is aligned to token IDs before any training target shift. Omitting
+`return_loss_weights` returns just IDs. Weights never change tokenization.
+See the [runnable preparation example](examples/prepare_data.py) and
+[weight contract](docs/design.md#rendering-and-encoding).
 
 ## Examples and remaining work
 
@@ -171,6 +208,8 @@ make all        # everything CI runs
 make check-artifact APERTUS_ENCODING=/path/to/artifact  # required real artifact
 make harness APERTUS_ENCODING=/path/to/artifact         # token continuation example
 make bench APERTUS_ENCODING=/path/to/artifact           # text/token throughput
+make prepare APERTUS_ENCODING=/path/to/artifact         # weighted data example
+make bench-prepare APERTUS_ENCODING=/path/to/artifact   # preparation throughput
 make build      # build wheel and source distribution
 ```
 

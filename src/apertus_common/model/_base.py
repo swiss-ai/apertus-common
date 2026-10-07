@@ -23,6 +23,8 @@ from typing import (
 from pydantic import (
     AfterValidator,
     BaseModel,
+    BeforeValidator,
+    Field,
     GetJsonSchemaHandler,
     PlainSerializer,
     StrictStr,
@@ -254,6 +256,19 @@ MessageType = Annotated[
 ]
 
 
+def _loss_weight(value: object) -> object:
+    if value is not None and type(value) not in (int, float):
+        raise ValueError("loss_weight must be a finite non-negative number or None")
+    return value
+
+
+LossWeight = Annotated[
+    Annotated[float, Field(ge=0, allow_inf_nan=False)] | None,
+    BeforeValidator(_loss_weight),
+    Field(default=None, exclude_if=lambda value: value is None),
+]
+
+
 def strict_json_loads(data: str | bytes) -> Any:
     """Decode strict JSON, rejecting duplicate keys and non-finite numbers."""
 
@@ -331,6 +346,8 @@ class Model(
         try:
             value = strict_json_loads(data)
             _require_discriminators(cls, value)
+            if "schema_version" in cls.model_fields:
+                value = _upgrade_native_conversation(value)
         except (ValueError, UnicodeError) as error:
             raise json_validation_error(cls, data, error) from error
         if cls in (Message, InputMessage, OutputMessage):
@@ -410,12 +427,28 @@ def _require_message_discriminators(value: object) -> None:
         raise ValueError("native messages require direction and type discriminators")
 
 
+def _upgrade_native_conversation(value: Any) -> Any:
+    if not isinstance(value, dict):
+        return value
+    data = cast(dict[str, object], value)
+    if type(data.get("schema_version")) is not int or data["schema_version"] != 1:
+        return data
+    records: list[object] = [data.get("system")]
+    items = data.get("items")
+    if isinstance(items, list):
+        records.extend(cast(list[object], items))
+    if any(isinstance(record, dict) and "loss_weight" in record for record in records):
+        raise ValueError("loss_weight requires native schema_version 2")
+    return {**data, "schema_version": 2}
+
+
 class Message(Model, frozen=True):
     """Common base for native messages; construct a concrete message type."""
 
     direction: Literal["in", "out"]
     type: MessageType
     payload: UnicodeScalarString
+    loss_weight: LossWeight = None
 
     @model_validator(mode="before")
     @classmethod

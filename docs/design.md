@@ -75,15 +75,25 @@ conversation = (
 assert Conversation.from_json(conversation.to_json()) == conversation
 ```
 
-Native conversation JSON requires `schema_version: 1`; native messages require
+Native conversation JSON uses `schema_version: 2`; native messages require
 their `direction` and `type` discriminators. Constructors supply fixed defaults.
 `Message.from_json()` dispatches to the concrete type. Loading rejects duplicate
 JSON keys, constructor-only aliases (`from_`, `json_schema`) and missing or
 unsupported versions. Native JSON uses `from` and `schema`. Use these helpers
 for storage; Pydantic's lower-level construction/copy APIs are not substitutes for this
 contract. `Conversation.model_json_schema()` exports the schema with identifier
-`urn:apertus-common:native:1`. JSONL datasets contain one native conversation per
-line. The pilot JSON and Python API have no compatibility aliases or converters.
+`urn:apertus-common:native:2`. `Conversation.from_json()` upgrades unweighted
+v1 records to v2; v1 records containing `loss_weight` are rejected. New serialization
+always emits v2. The v1 schema snapshot remains available for historical records.
+JSONL datasets contain one native conversation per line. The pilot JSON and
+Python API have no compatibility aliases or converters.
+
+Messages, system prompts and waits accept optional `loss_weight` training metadata.
+Values are finite non-negative numbers; booleans and numeric strings are rejected.
+`None` means unset and is omitted from JSON, while explicit zero is retained.
+The metadata never enters headers, payloads or rendered system JSON. Native JSON
+round trips preserve it; text/token parsing cannot recover it. Builders expose
+the same field, including conversation shortcuts.
 
 ## Explicit checking
 
@@ -97,13 +107,26 @@ line. The pilot JSON and Python API have no compatibility aliases or converters.
 | `conversation` | Profile checks plus system presence, call/result history, waits, document IDs and advisory claim placement |
 | `full` | Conversation checks plus argument JSON and declared schemas |
 
-`checkers_for(mode)` exposes the presets; `rule_table()` and `make rules` list
+`checkers_for(mode, allow_loss_weights=False)` exposes the presets; `rule_table()` and `make rules` list
 stable rule IDs. `Checker` supports custom rules. Reports distinguish
 `violations` from `unevaluated` checks: `ok` means no errors, and `complete`
 means no missing evidence. Warnings do not make `ok` false.
 `from_json(..., check=...)` and builders' `build(check=...)` accept a mode or
 `CheckOptions`; they raise `ConformanceError(report)` for errors or incomplete
 checks. They never return a partially checked success.
+
+Explicit weights produce `profile/loss-weight` errors unless the selected
+`ProfileChecker` opts in. Use `checkers_for("full", allow_loss_weights=True)`
+for weighted training records. Structural loading validates numbers regardless
+of this policy. Context system prompts are checked too; weights do not change
+whether two system configurations agree.
+
+Reuse a checker tuple across records in a worker. `ArgumentsChecker` keeps a
+bounded process-local LRU cache of compiled schemas and compilation failures,
+defaulting to 256 entries; `schema_cache_size=0` disables caching. Keys include
+the complete schema, its dialect and property order. Findings and their
+locations are generated anew for every record. A fresh preset on every call
+cannot reuse this cache. Host checking tracks pending calls incrementally.
 
 `CheckContext` carries complete/partial history, an optional preceding
 conversation, checkpoint and explicit host closures. Every document requires
@@ -165,6 +188,29 @@ Use `encode_items` for output-parser round trips and continuation segments;
 the output parser rejects BOS and input messages.
 `decode_text` is diagnostic. Token-ID parsing recognizes controls by ID, so
 literal spellings in ordinary text remain payload.
+
+`encode_conversations(conversations)` batches ordinary-text runs through the
+backend and returns one ID list per conversation, including BOS. Results are
+identical to separate scalar calls; an empty batch returns `[]`. The caller
+bounds batches and controls worker processes and tokenizer threading.
+
+`encode_conversation`, `encode_items` and `encode_conversations` accept
+`return_loss_weights=True`. Scalar operations then return `EncodingResult`
+with equally long `token_ids` and `loss_weights` lists; batching returns a list
+of those results. IDs are unchanged by weights or the flag. No weight vector
+is allocated on the default IDs-only path.
+
+| Region | Default | Explicit annotation |
+| --- | --- | --- |
+| BOS | 0 | Always 0 |
+| Input/system opening, header and closing | 0 | Always 0 |
+| Input/system payload | 0 | Message weight |
+| Entire output frame, including header and controls | 1 | Message weight |
+| Wait | 1 | Wait's own weight, independent of prior output |
+
+These are unshifted floating-point weights: position `i` supervises prediction
+of token `i`. Fractional values and values above one are supported. The library
+does not shift targets, pad, truncate, pack, schedule jobs or read datasets.
 
 `controls` exposes the seven `ControlTokenIds`. `generation_constraints`
 provides wait as EOS and forbids every special ID except output-start,
@@ -229,8 +275,12 @@ diagnostic. Null tool fields count as absent; `strict: false` is accepted and
 The default policy rejects mappings that would lose native information,
 including host/document/unknown outputs, claim omission, richer system settings
 or unrepresentable assistant ordering. `MappingPolicy` explicitly permits
-merging system messages, merging assistant messages or omitting claims; lossy
+merging system messages, merging assistant messages, omitting claims or
+`omit_loss_weights=True`; lossy
 conversions produce diagnostics. There is no assistant-prefill support.
+Native-to-OpenAI mappings reject annotated records unless weight omission is
+explicitly enabled. Native weights supplied through `from_openai(system_defaults=...)`
+are preserved on the constructed system prompt.
 
 `OpenAIStreamMapper` consumes the parser's events and returns OpenAI deltas;
 `take_diagnostics()` drains mapping notices and `finish()` returns the assembled
@@ -260,5 +310,7 @@ invariants, all tests and execution/type-checking of four notebooks. Unit token
 fixtures are explicitly synthetic. `make check-artifact APERTUS_ENCODING=...`
 requires the real artifact and fails if absent. `make bench` reports parser
 throughput and memory; timings are observations, not portability guarantees.
+`make bench-prepare APERTUS_ENCODING=...` separately measures JSON loading,
+checking and scalar/batch encoding, including weighted encoding and host histories.
 External framework and model-dependent rollout gates are tracked separately in
 DEVELOPMENT.md.

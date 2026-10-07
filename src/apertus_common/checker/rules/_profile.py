@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import replace
+from itertools import chain
 from typing import ClassVar
 
 from apertus_common.checker._context import CheckContext
@@ -14,6 +15,9 @@ from apertus_common.model import Call, Document, Result, UnknownOutput
 
 
 class ProfileChecker(Checker):
+    def __init__(self, *, allow_loss_weights: bool = False) -> None:
+        self._allow_loss_weights = allow_loss_weights
+
     rules: ClassVar[tuple[Rule, ...]] = (
         Rule("profile/known-output", "output types belong to the Apertus 2 profile"),
         Rule(
@@ -25,12 +29,21 @@ class ProfileChecker(Checker):
         ),
         Rule("profile/unique-tool-name", "declared tool names are unique"),
         Rule("profile/object-schema", "tool schemas declare object-root arguments"),
+        Rule("profile/loss-weight", "training loss annotations require opt-in"),
     )
 
     def check(
         self, value: CheckValue, context: CheckContext | None = None
     ) -> Iterable[Violation | Unevaluated]:
         current = view(value, context)
+        if not self._allow_loss_weights:
+            for weighted, location in chain(current.systems, current.items):
+                if weighted.loss_weight is not None:
+                    yield self.violation(
+                        "profile/loss-weight",
+                        replace(location, field="loss_weight"),
+                        "loss weights require allow_loss_weights=True",
+                    )
         for item, location in current.items:
             if isinstance(item, UnknownOutput):
                 yield self.violation(

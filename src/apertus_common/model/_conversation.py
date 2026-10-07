@@ -20,6 +20,7 @@ from apertus_common.model._base import (
     KNOWN_INPUT_TYPES,
     KNOWN_OUTPUT_TYPES,
     ImmutableList,
+    LossWeight,
     Model,
 )
 from apertus_common.model._input import Document, Host, Result, User
@@ -32,6 +33,7 @@ if TYPE_CHECKING:
 
 class Wait(Model, frozen=True):
     type: Literal["wait"] = "wait"
+    loss_weight: LossWeight = None
 
 
 def _item_tag(value: Any) -> str | None:
@@ -86,7 +88,7 @@ MESSAGE_ADAPTER: TypeAdapter[MessageValue] = TypeAdapter(MessageValue)
 
 class Conversation(Model, frozen=True):
     _default_check_mode: ClassVar[CheckMode] = "full"
-    schema_version: Literal[1] = 1
+    schema_version: Literal[2] = 2
     system: SystemPrompt | None = None
     items: ImmutableList[ConversationItem] = Field(default_factory=tuple)
 
@@ -95,7 +97,7 @@ class Conversation(Model, frozen=True):
         cls, core_schema: CoreSchema, handler: GetJsonSchemaHandler
     ) -> JsonSchemaValue:
         schema = super().__get_pydantic_json_schema__(core_schema, handler)
-        schema["$id"] = "urn:apertus-common:native:1"
+        schema["$id"] = "urn:apertus-common:native:2"
         return schema
 
     @field_validator("schema_version", mode="before")

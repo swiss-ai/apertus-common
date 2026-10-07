@@ -9,6 +9,7 @@ from pydantic import BeforeValidator, Field
 
 from apertus_common.model._base import (
     ImmutableList,
+    LossWeight,
     Model,
     NonEmptyHeaderValue,
     UnicodeScalarString,
@@ -40,6 +41,7 @@ class SystemPrompt(Model, frozen=True):
     behavior: UnicodeScalarString | None = None
     tools: ImmutableList[ToolSpec] = Field(default_factory=tuple)
     environment: UnicodeScalarString | None = None
+    loss_weight: LossWeight = None
 
     @classmethod
     def build(
@@ -50,6 +52,7 @@ class SystemPrompt(Model, frozen=True):
         behavior: str | None = None,
         tools: Sequence[ToolSpec] = (),
         environment: str | None = None,
+        loss_weight: float | None = None,
         check: CheckMode | CheckOptions | None = None,
     ) -> Self:
         from apertus_common.model._base import apply_model_check
@@ -61,6 +64,7 @@ class SystemPrompt(Model, frozen=True):
                 "behavior": behavior,
                 "tools": tools,
                 "environment": environment,
+                "loss_weight": loss_weight,
             }
         )
         return apply_model_check(result, check)

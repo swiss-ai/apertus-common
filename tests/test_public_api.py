@@ -12,6 +12,7 @@ from apertus_common import Conversation
 from conftest import full_cast
 
 EXPECTED = {
+    "EncodingResult",
     "ConformanceError",
     "Think",
     "ConversationChecker",
@@ -99,7 +100,7 @@ def test_json_schema_encodes_runtime_constraints() -> None:
     schema = Conversation.model_json_schema()
     definitions = schema["$defs"]
 
-    assert schema["$id"] == "urn:apertus-common:native:1"
+    assert schema["$id"] == "urn:apertus-common:native:2"
     assert "schema_version" in schema["required"]
     assert "reply" in definitions["UnknownOutput"]["properties"]["type"]["not"]["enum"]
     assert {"direction", "type", "counter", "name", "payload"} <= set(
@@ -117,10 +118,10 @@ def test_json_schema_accepts_dumps_and_rejects_invalid_models() -> None:
 
     invalid_models = [
         {"items": []},
-        {"schema_version": 2, "items": []},
-        {"schema_version": 1, "items": [{"type": "reply", "payload": "x"}]},
+        {"schema_version": 3, "items": []},
+        {"schema_version": 2, "items": [{"type": "reply", "payload": "x"}]},
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "items": [
                 {
                     "direction": "out",
@@ -132,7 +133,7 @@ def test_json_schema_accepts_dumps_and_rejects_invalid_models() -> None:
             ],
         },
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "items": [
                 {
                     "direction": "in",
@@ -201,12 +202,12 @@ def test_json_schema_dynamic_anchors_are_unique() -> None:
 def test_exported_schema_rejects_invalid_header_and_unicode_values(
     item: dict[str, object],
 ) -> None:
-    document = {"schema_version": 1, "items": [item]}
+    document = {"schema_version": 2, "items": [item]}
     with pytest.raises(ValidationError):
         Conversation.from_json(json.dumps(document))
     assert not Draft202012Validator(Conversation.model_json_schema()).is_valid(document)
 
 
 def test_native_schema_snapshot() -> None:
-    path = Path(__file__).parent / "fixtures" / "native-v1.schema.json"
+    path = Path(__file__).parent / "fixtures" / "native-v2.schema.json"
     assert Conversation.model_json_schema() == json.loads(path.read_text())

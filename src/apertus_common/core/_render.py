@@ -24,7 +24,11 @@ def _json(value: object) -> str:
 
 def _message_atoms(message: Message) -> Iterator[WireAtom]:
     is_input = isinstance(message, InputMessage)
-    yield Control(ControlToken.IN if is_input else ControlToken.OUT)
+    payload_weight = message.loss_weight
+    if payload_weight is None:
+        payload_weight = 0.0 if is_input else 1.0
+    frame_weight = 0.0 if is_input else payload_weight
+    yield Control(ControlToken.IN if is_input else ControlToken.OUT, frame_weight)
     headers: dict[str, object] = {}
     if isinstance(message, (Call, Result)):
         headers = {"name": message.name, "counter": message.counter}
@@ -35,11 +39,15 @@ def _message_atoms(message: Message) -> Iterator[WireAtom]:
             headers["id"] = message.id
     elif isinstance(message, UnknownOutput):
         headers = message.model_dump(mode="json")["headers"]
-    yield Text(message.type + (_json(headers) if headers else ""), "structural")
-    yield Control(ControlToken.HDR)
+    yield Text(
+        message.type + (_json(headers) if headers else ""), "structural", frame_weight
+    )
+    yield Control(ControlToken.HDR, frame_weight)
     if message.payload:
-        yield Text(message.payload, "payload")
-    yield Control(ControlToken.IN_END if is_input else ControlToken.OUT_END)
+        yield Text(message.payload, "payload", payload_weight)
+    yield Control(
+        ControlToken.IN_END if is_input else ControlToken.OUT_END, frame_weight
+    )
 
 
 def to_wire(conversation: Conversation) -> tuple[WireAtom, ...]:
@@ -48,20 +56,21 @@ def to_wire(conversation: Conversation) -> tuple[WireAtom, ...]:
     if conversation.system is not None:
         # `tools` is always present; an empty array means no tools.
         system = conversation.system.model_dump(
-            mode="json", by_alias=True, exclude_none=True
+            mode="json", by_alias=True, exclude_none=True, exclude={"loss_weight"}
         )
         atoms.extend(
             (
                 Control(ControlToken.IN),
                 Text("system", "structural"),
                 Control(ControlToken.HDR),
-                Text(_json(system), "payload"),
+                Text(_json(system), "payload", conversation.system.loss_weight or 0.0),
                 Control(ControlToken.IN_END),
             )
         )
     for item in conversation.items:
         if isinstance(item, Wait):
-            atoms.append(Control(ControlToken.WAIT))
+            weight = 1.0 if item.loss_weight is None else item.loss_weight
+            atoms.append(Control(ControlToken.WAIT, weight))
         else:
             atoms.extend(_message_atoms(item))
     return tuple(atoms)
