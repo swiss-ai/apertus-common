@@ -6,7 +6,7 @@ profile are authoritative. Leading BOS, an always-present system `tools` array
 and non-empty tool names also follow the decisions proposed in
 [spec PR #11](https://github.com/swiss-ai/apertus-2-format-spec-proposal/pull/11),
 which are not yet part of this baseline. Scope, integration plans and remaining
-release gates live in [DEVELOPMENT.md](../DEVELOPMENT.md).
+release gates are maintained in the optional local-only `DEVELOPMENT.md`.
 
 ## Architecture
 
@@ -132,8 +132,9 @@ check the selected data explicitly before encoding it.
 | `conversation` | Profile checks plus system presence, call/result history, waits, document IDs and advisory claim placement |
 | `full` | Conversation checks plus argument JSON and declared schemas |
 
-`checkers_for(mode, allow_loss_weights=False)` exposes the presets; `rule_table()` and `make rules` list
-stable rule IDs. `Checker` supports custom rules. Reports distinguish
+`checkers_for(mode, allow_loss_weights=False, training=False)` exposes the presets;
+`rule_table()` and `make rules` list all stable rule IDs, including opt-in
+training advice. `Checker` supports custom rules. Reports distinguish
 `violations` from `unevaluated` checks: `ok` means no errors, and `complete`
 means no missing evidence. Warnings do not make `ok` false.
 `from_json(..., check=...)` and builders' `build(check=...)` accept a mode or
@@ -166,7 +167,14 @@ call; host prose is never interpreted. Reports locate findings in the value,
 prefix or checkpoint. No checker mutates these inputs.
 
 Pending calls and unfinished conversations are allowed. After a wait, further
-output or another wait requires input. Result association uses counter and name;
+output or another wait requires input.
+
+`training=True` appends `TrainingChecker` to any preset; modes never include it.
+It warns about valid histories that turn-based training data rarely intends,
+because decoding stops only at a wait: `training/input-mid-burst` for input
+directly after output, and `training/final-wait` when the observed history,
+including a supplied prefix, ends with output. Standalone values are skipped.
+These warnings never change `ok` or `complete`. Result association uses counter and name;
 duplicate or unmatched results, reused counters and duplicate document IDs are findings.
 Claim-after-reply placement is advisory. Queue scheduling remains a harness
 responsibility.

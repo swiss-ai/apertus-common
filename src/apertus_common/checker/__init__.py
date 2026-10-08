@@ -33,6 +33,7 @@ from apertus_common.checker.rules import (
     ConversationChecker,
     ProfileChecker,
     Rule,
+    TrainingChecker,
 )
 
 __all__ = [
@@ -51,6 +52,7 @@ __all__ = [
     "ProfileChecker",
     "Rule",
     "Severity",
+    "TrainingChecker",
     "Unevaluated",
     "Violation",
     "check_arguments",

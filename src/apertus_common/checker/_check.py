@@ -15,26 +15,36 @@ from apertus_common.checker.rules._arguments import ArgumentsChecker
 from apertus_common.checker.rules._base import Checker, CheckValue, Rule
 from apertus_common.checker.rules._conversation import ConversationChecker
 from apertus_common.checker.rules._profile import ProfileChecker
+from apertus_common.checker.rules._training import TrainingChecker
 
 
 def checkers_for(
-    mode: CheckMode, *, allow_loss_weights: bool = False
+    mode: CheckMode, *, allow_loss_weights: bool = False, training: bool = False
 ) -> tuple[Checker, ...]:
-    """Create reusable checkers; explicit checker lists replace this preset."""
+    """Create reusable checkers; explicit checker lists replace this preset.
+
+    `training=True` appends the advisory `TrainingChecker` for training records.
+    """
     profile = ProfileChecker(allow_loss_weights=allow_loss_weights)
     match mode:
         case "profile":
-            return (profile,)
+            checkers: tuple[Checker, ...] = (profile,)
         case "conversation":
-            return (profile, ConversationChecker())
+            checkers = (profile, ConversationChecker())
         case "full":
-            return (profile, ConversationChecker(), ArgumentsChecker())
+            checkers = (profile, ConversationChecker(), ArgumentsChecker())
         case _:
             raise ValueError(f"unknown check mode: {mode!r}")
+    return (*checkers, TrainingChecker()) if training else checkers
 
 
 def rule_table() -> tuple[Rule, ...]:
-    return tuple(rule for checker in checkers_for("full") for rule in checker.rules)
+    """All built-in rules, including the opt-in training advice."""
+    return tuple(
+        rule
+        for checker in checkers_for("full", training=True)
+        for rule in checker.rules
+    )
 
 
 def check_value(

@@ -50,6 +50,7 @@ EXPECTED = {
     "ProfileChecker",
     "Checker",
     "ToolSpec",
+    "TrainingChecker",
     "MappingPolicy",
     "GenerationConstraints",
     "Reply",

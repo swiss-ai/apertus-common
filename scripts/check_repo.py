@@ -35,7 +35,7 @@ def check_rules() -> list[str]:
         if not rule.description.strip():
             problems.append(f"rule {rule.id!r} has an empty description")
 
-    for checker in checkers_for("full"):
+    for checker in checkers_for("full", training=True):
         if not checker.rules:
             problems.append(f"{type(checker).__name__} declares no rules")
 

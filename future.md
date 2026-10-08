@@ -1,7 +1,7 @@
 # Future work
 
-Considerations that are not planned yet. Committed scope and plans live in
-[DEVELOPMENT.md](DEVELOPMENT.md).
+Considerations that are not planned yet. Development scope and plans are
+maintained in the optional local-only `DEVELOPMENT.md`.
 
 ## Expose claims through the OpenAI mapping
 

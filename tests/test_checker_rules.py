@@ -10,9 +10,10 @@ from apertus_common.checker import (
     HistoryCheckpoint,
     HostClosure,
     check_arguments,
+    checkers_for,
     parse_arguments,
 )
-from apertus_common.checker.rules import ArgumentsChecker
+from apertus_common.checker.rules import ArgumentsChecker, TrainingChecker
 from apertus_common.errors import ArgumentError
 from apertus_common.model import (
     Call,
@@ -138,6 +139,49 @@ def test_claim_placement_is_advisory_and_multiple_claims_allowed():
         Claim(payload="c"),
     ).check()
     assert report.ok and len(report.warnings) == 1
+
+
+def test_training_burst_advice_is_opt_in_and_advisory():
+    unclosed = conversation(
+        User(payload="a"),
+        Reply(payload="b"),
+        User(payload="c"),
+        call(),
+        result(),
+        Reply(payload="d"),
+    )
+    assert not unclosed.check().violations
+    report = unclosed.check(checkers=checkers_for("full", training=True))
+    assert report.ok and report.complete
+    assert [(v.rule, v.location.item) for v in report.warnings] == [
+        ("training/input-mid-burst", 2),
+        ("training/input-mid-burst", 4),
+        ("training/final-wait", 5),
+    ]
+    closed = conversation(
+        User(payload="a"),
+        Reply(payload="b"),
+        Wait(),
+        User(payload="c"),
+        call(),
+        Wait(),
+        result(),
+        Reply(payload="d"),
+        Wait(),
+    )
+    assert not closed.check(checkers=[TrainingChecker()]).violations
+    assert not Reply(payload="x").check(checkers=[TrainingChecker()]).violations
+
+
+def test_training_burst_advice_spans_prefix():
+    prefix = conversation(User(payload="a"), Reply(payload="b"))
+    fragment = Conversation(items=[User(payload="c"), Reply(payload="d"), Wait()])
+    report = fragment.check(
+        checkers=[TrainingChecker()], context=CheckContext(prefix=prefix)
+    )
+    assert [(v.rule, v.location.source, v.location.item) for v in report] == [
+        ("training/input-mid-burst", "value", 0)
+    ]
 
 
 def test_prefix_supplies_system_counter_and_calls():

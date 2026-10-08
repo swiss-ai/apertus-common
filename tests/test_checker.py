@@ -43,6 +43,7 @@ def test_presets_and_replacement():
     assert "arguments/json" in {v.rule for v in conv.check("full")}
     assert conv.check(checkers=[]).ok
     assert len(checkers_for("profile")) < len(checkers_for("full"))
+    assert len(checkers_for("full", training=True)) == len(checkers_for("full")) + 1
     with pytest.raises(ValueError, match="unknown check mode"):
         conv.check("typo")
 
@@ -100,6 +101,9 @@ def test_rule_table_unique():
     table = rule_table()
     assert len(table) == len({rule.id for rule in table})
     assert all(rule.description for rule in table)
+    assert {"training/input-mid-burst", "training/final-wait"} <= {
+        rule.id for rule in table
+    }
 
 
 def test_lightweight_paths_do_not_load_jsonschema():
