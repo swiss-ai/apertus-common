@@ -128,10 +128,10 @@ Input conversion must choose source branches and map content to these typed
 messages. Tool calls/results additionally carry top-level `name` and `counter`;
 their payloads remain strings. Tool declarations use native `schema`, not the
 OpenAI `parameters` key. Dataset IDs and annotations belong outside the native
-conversation. Store the JSON string in `conversation_json` for HF or wrapped
-JSONL datasets; a nested conversation object is a different storage layout.
+conversation. Store the JSON string in `conversation_json` for HF, Parquet or
+wrapped JSONL datasets; a nested conversation object is a different storage layout.
 The standalone pipeline's `apertus2-processing/README.md` documents its supported
-containers and CLI. Encoding this library's models does not establish conformance;
+Parquet/HF containers and CLI. Encoding this library's models does not establish conformance;
 check the selected data explicitly before encoding it.
 
 ## Explicit checking

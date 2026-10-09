@@ -217,7 +217,7 @@ The standalone integration in
 [posttraining-data](https://github.com/swiss-ai/posttraining-data), directory
 `apertus2-processing/` on branch `feat/apertus2-data-processing`, owns dataset
 readers, aggregate reports, workers and resumable shards. Its README documents
-CLI commands and JSONL/HF input layouts. For legacy pipeline data, convert after
+CLI commands and Parquet/HF input layouts. For legacy pipeline data, convert after
 recipe-specific curation/mixture selection and before legacy linearization.
 Already-native data needs no numbered legacy stage.
 
