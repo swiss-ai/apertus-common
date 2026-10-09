@@ -39,9 +39,8 @@ def _message_atoms(message: Message) -> Iterator[WireAtom]:
             headers["id"] = message.id
     elif isinstance(message, UnknownOutput):
         headers = message.model_dump(mode="json")["headers"]
-    yield Text(
-        message.type + (_json(headers) if headers else ""), "structural", frame_weight
-    )
+    kind = message.output_type if isinstance(message, UnknownOutput) else message.type
+    yield Text(kind + (_json(headers) if headers else ""), "structural", frame_weight)
     yield Control(ControlToken.HDR, frame_weight)
     if message.payload:
         yield Text(message.payload, "payload", payload_weight)

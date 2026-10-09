@@ -1,7 +1,6 @@
 """Native training annotations are explicit, strict, and storage-only."""
 
 import json
-from pathlib import Path
 
 import pytest
 from jsonschema import Draft202012Validator
@@ -13,7 +12,6 @@ from apertus_common import (
     Message,
     Reply,
     SystemPrompt,
-    ToolSpec,
     User,
     Wait,
 )
@@ -48,54 +46,16 @@ def test_loss_weight_storage_roundtrip_and_omission(weight):
     assert Draft202012Validator(Conversation.model_json_schema()).is_valid(dumped)
 
 
-def test_v1_native_loading_upgrades_without_rewriting_messages():
-    record = Conversation(system=SystemPrompt.build(), items=[Reply(payload="exact\n")])
-    old = json.loads(record.to_json())
-    old["schema_version"] = 1
-    snapshot = Path(__file__).parent / "fixtures" / "native-v1.schema.json"
-    assert Draft202012Validator(json.loads(snapshot.read_text())).is_valid(old)
-    loaded = Conversation.from_json(json.dumps(old))
-    assert loaded == record
-    assert json.loads(loaded.to_json())["schema_version"] == 2
-
-
-@pytest.mark.parametrize("target", ["system", "message", "wait"])
-@pytest.mark.parametrize("weight", [None, 0, 1])
-def test_v1_rejects_new_annotation_even_when_null(target, weight):
-    record = {
-        "schema_version": 1,
-        "system": {"thinking": "medium"},
-        "items": [
-            {"direction": "out", "type": "reply", "payload": "x"},
-            {"type": "wait"},
-        ],
-    }
-    annotated = (
-        record["system"] if target == "system" else record["items"][target == "wait"]
-    )
-    annotated["loss_weight"] = weight
-    with pytest.raises(ValidationError, match="requires native schema_version 2"):
-        Conversation.from_json(json.dumps(record))
-
-
-def test_v1_schema_property_named_loss_weight_is_not_training_metadata():
+@pytest.mark.parametrize("weight", [None, 0, 0.5])
+def test_v1_is_rejected_without_migration(weight):
     record = Conversation(
-        system=SystemPrompt.build(
-            tools=[
-                ToolSpec(
-                    name="t",
-                    description="",
-                    json_schema={
-                        "type": "object",
-                        "properties": {"loss_weight": {"type": "number"}},
-                    },
-                )
-            ]
-        )
+        system=SystemPrompt.build(loss_weight=weight),
+        items=[Reply(payload="exact", loss_weight=weight)],
     )
     old = json.loads(record.to_json())
     old["schema_version"] = 1
-    assert Conversation.from_json(json.dumps(old)) == record
+    with pytest.raises(ValidationError):
+        Conversation.from_json(json.dumps(old))
 
 
 def test_weighted_factories_and_all_conversation_shortcuts():

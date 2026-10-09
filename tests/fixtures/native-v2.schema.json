@@ -3,12 +3,6 @@
     "Call": {
       "additionalProperties": false,
       "properties": {
-        "direction": {
-          "const": "out",
-          "default": "out",
-          "title": "Direction",
-          "type": "string"
-        },
         "type": {
           "const": "call",
           "default": "call",
@@ -48,7 +42,6 @@
         "payload",
         "name",
         "counter",
-        "direction",
         "type"
       ],
       "title": "Call",
@@ -57,12 +50,6 @@
     "Claim": {
       "additionalProperties": false,
       "properties": {
-        "direction": {
-          "const": "out",
-          "default": "out",
-          "title": "Direction",
-          "type": "string"
-        },
         "type": {
           "const": "claim",
           "default": "claim",
@@ -90,7 +77,6 @@
       },
       "required": [
         "payload",
-        "direction",
         "type"
       ],
       "title": "Claim",
@@ -99,12 +85,6 @@
     "Document": {
       "additionalProperties": false,
       "properties": {
-        "direction": {
-          "const": "in",
-          "default": "in",
-          "title": "Direction",
-          "type": "string"
-        },
         "type": {
           "const": "document",
           "default": "document",
@@ -160,7 +140,6 @@
       },
       "required": [
         "payload",
-        "direction",
         "type"
       ],
       "title": "Document",
@@ -257,12 +236,6 @@
     "Host": {
       "additionalProperties": false,
       "properties": {
-        "direction": {
-          "const": "in",
-          "default": "in",
-          "title": "Direction",
-          "type": "string"
-        },
         "type": {
           "const": "host",
           "default": "host",
@@ -290,14 +263,28 @@
       },
       "required": [
         "payload",
-        "direction",
         "type"
       ],
       "title": "Host",
       "type": "object"
     },
-    "ImmutableList_Annotated_Union_Annotated_Host__Tag___Annotated_User__Tag___Annotated_Document__Tag___Annotated_Result__Tag___Annotated_Think__Tag___Annotated_Reply__Tag___Annotated_Claim__Tag___Annotated_Call__Tag___Annotated_UnknownOutput__Tag___Annotated_Wait__Tag____Discriminator__": {
+    "ImmutableList_Annotated_Union_Host__User__Document__Result__Think__Reply__Claim__Call__UnknownOutput__Wait___FieldInfo_annotation_NoneType__required_True__discriminator__type____": {
       "items": {
+        "discriminator": {
+          "mapping": {
+            "call": "#/$defs/Call",
+            "claim": "#/$defs/Claim",
+            "document": "#/$defs/Document",
+            "host": "#/$defs/Host",
+            "reply": "#/$defs/Reply",
+            "result": "#/$defs/Result",
+            "think": "#/$defs/Think",
+            "unknown_output": "#/$defs/UnknownOutput",
+            "user": "#/$defs/User",
+            "wait": "#/$defs/Wait"
+          },
+          "propertyName": "type"
+        },
         "oneOf": [
           {
             "$ref": "#/$defs/Host"
@@ -342,12 +329,6 @@
     "Reply": {
       "additionalProperties": false,
       "properties": {
-        "direction": {
-          "const": "out",
-          "default": "out",
-          "title": "Direction",
-          "type": "string"
-        },
         "type": {
           "const": "reply",
           "default": "reply",
@@ -375,7 +356,6 @@
       },
       "required": [
         "payload",
-        "direction",
         "type"
       ],
       "title": "Reply",
@@ -384,12 +364,6 @@
     "Result": {
       "additionalProperties": false,
       "properties": {
-        "direction": {
-          "const": "in",
-          "default": "in",
-          "title": "Direction",
-          "type": "string"
-        },
         "type": {
           "const": "result",
           "default": "result",
@@ -429,7 +403,6 @@
         "payload",
         "name",
         "counter",
-        "direction",
         "type"
       ],
       "title": "Result",
@@ -506,12 +479,6 @@
     "Think": {
       "additionalProperties": false,
       "properties": {
-        "direction": {
-          "const": "out",
-          "default": "out",
-          "title": "Direction",
-          "type": "string"
-        },
         "type": {
           "const": "think",
           "default": "think",
@@ -539,7 +506,6 @@
       },
       "required": [
         "payload",
-        "direction",
         "type"
       ],
       "title": "Think",
@@ -596,22 +562,9 @@
     "UnknownOutput": {
       "additionalProperties": false,
       "properties": {
-        "direction": {
-          "const": "out",
-          "default": "out",
-          "title": "Direction",
-          "type": "string"
-        },
         "type": {
-          "not": {
-            "enum": [
-              "call",
-              "claim",
-              "reply",
-              "think"
-            ]
-          },
-          "pattern": "^[A-Za-z0-9_-]+(?![\\s\\S])",
+          "const": "unknown_output",
+          "default": "unknown_output",
           "title": "Type",
           "type": "string"
         },
@@ -633,14 +586,27 @@
           "default": null,
           "title": "Loss Weight"
         },
+        "output_type": {
+          "not": {
+            "enum": [
+              "call",
+              "claim",
+              "reply",
+              "think"
+            ]
+          },
+          "pattern": "^[A-Za-z0-9_-]+(?![\\s\\S])",
+          "title": "Output Type",
+          "type": "string"
+        },
         "headers": {
           "$ref": "#/$defs/HeaderJsonObject"
         }
       },
       "required": [
-        "type",
         "payload",
-        "direction"
+        "output_type",
+        "type"
       ],
       "title": "UnknownOutput",
       "type": "object"
@@ -648,12 +614,6 @@
     "User": {
       "additionalProperties": false,
       "properties": {
-        "direction": {
-          "const": "in",
-          "default": "in",
-          "title": "Direction",
-          "type": "string"
-        },
         "type": {
           "const": "user",
           "default": "user",
@@ -681,7 +641,6 @@
       },
       "required": [
         "payload",
-        "direction",
         "type"
       ],
       "title": "User",
@@ -738,7 +697,7 @@
       "default": null
     },
     "items": {
-      "$ref": "#/$defs/ImmutableList_Annotated_Union_Annotated_Host__Tag___Annotated_User__Tag___Annotated_Document__Tag___Annotated_Result__Tag___Annotated_Think__Tag___Annotated_Reply__Tag___Annotated_Claim__Tag___Annotated_Call__Tag___Annotated_UnknownOutput__Tag___Annotated_Wait__Tag____Discriminator__"
+      "$ref": "#/$defs/ImmutableList_Annotated_Union_Host__User__Document__Result__Think__Reply__Claim__Call__UnknownOutput__Wait___FieldInfo_annotation_NoneType__required_True__discriminator__type____"
     }
   },
   "required": [

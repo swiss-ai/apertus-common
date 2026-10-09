@@ -61,7 +61,7 @@ def rules(report):
 def test_profile_fields_and_document_provenance():
     conv = conversation(
         Document(payload="x"),
-        UnknownOutput(type="quack", payload="x"),
+        UnknownOutput(output_type="quack", payload="x"),
         call(-1),
         tools=[tool(), tool()],
     )

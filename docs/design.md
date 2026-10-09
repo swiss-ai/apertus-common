@@ -35,7 +35,10 @@ input carrying compact JSON; `tools` is always present, an empty array when no
 tools are declared. Input messages are `Host`, `User`,
 `Document(from_, id)` and `Result(name, counter)`; outputs are `Think`, `Reply`,
 `Claim` and `Call(name, counter)`. All messages have a text `payload`.
-`UnknownOutput(type, headers, payload)` preserves unfamiliar output types.
+`UnknownOutput(output_type, headers, payload)` preserves unfamiliar output types.
+Its native `type` is always `unknown_output`; `output_type` is the original wire
+name. All messages expose read-only `.direction` derived from their input/output
+class; direction is not a constructor field or serialized metadata.
 `Wait` is a separate item. Known types reject extra fields.
 
 `SystemPrompt` contains required `thinking` (`low`, `medium`, `high`), optional
@@ -76,15 +79,14 @@ assert Conversation.from_json(conversation.to_json()) == conversation
 ```
 
 Native conversation JSON uses `schema_version: 2`; native messages require
-their `direction` and `type` discriminators. Constructors supply fixed defaults.
+their `type` discriminator. Constructors supply fixed defaults.
 `Message.from_json()` dispatches to the concrete type. Loading rejects duplicate
 JSON keys, constructor-only aliases (`from_`, `json_schema`) and missing or
 unsupported versions. Native JSON uses `from` and `schema`. Use these helpers
 for storage; Pydantic's lower-level construction/copy APIs are not substitutes for this
 contract. `Conversation.model_json_schema()` exports the schema with identifier
-`urn:apertus-common:native:2`. `Conversation.from_json()` upgrades unweighted
-v1 records to v2; v1 records containing `loss_weight` are rejected. New serialization
-always emits v2. The v1 schema snapshot remains available for historical records.
+`urn:apertus-common:native:2`. The unreleased v2 schema is revised in place:
+direction-bearing records and v1 records are rejected, with no migration path.
 JSONL datasets contain one native conversation per line. The pilot JSON and
 Python API have no compatibility aliases or converters.
 
@@ -103,12 +105,24 @@ serialize it onto one physical line with `Conversation.to_json()`:
   "schema_version": 2,
   "system": {"thinking": "medium", "tools": []},
   "items": [
-    {"direction": "in", "type": "user", "payload": "Hello"},
-    {"direction": "out", "type": "reply", "payload": "Hi"},
+    {"type": "user", "payload": "Hello"},
+    {"type": "reply", "payload": "Hi"},
     {"type": "wait"}
   ]
 }
 ```
+
+An unknown output uses an explicit storage wrapper:
+
+```json
+{"type":"unknown_output","output_type":"quack","headers":{},"payload":"..."}
+```
+
+`output_type` follows header type-name syntax and cannot name a known output
+(`think`, `reply`, `claim`, `call`). It may be `user`, `wait` or even
+`unknown_output` without colliding with native type discriminators. Rendering and
+encoding use `output_type`, never the wrapper tag. Profile checking reports
+`profile/known-output`; preserving a parsed message does not authorize dispatch.
 
 Input conversion must choose source branches and map content to these typed
 messages. Tool calls/results additionally carry top-level `name` and `counter`;
@@ -266,6 +280,11 @@ are `encoding.output_parser()` (`push_tokens`) and `TextStreamParser`
 `WaitReached()` events. Typed messages are
 constructed once, on close. Invalid argument JSON and unknown output types
 survive parsing; malformed framing or headers fail immediately.
+For unknown outputs, start events and `OpenMessage.type` carry the original wire
+name; completed messages store it in `UnknownOutput.output_type`. The harness
+does not dispatch them and appends an `UnknownMessageType` host notice at the
+next boundary, as required by the Apertus 2 profile. The library does not create
+notices or interrupt a well-framed burst.
 `MessageStart` guarantees a structurally valid header. Payload deltas remain
 provisional until the message closes successfully.
 

@@ -49,7 +49,7 @@ class ProfileChecker(Checker):
                 yield self.violation(
                     "profile/known-output",
                     location,
-                    f"unsupported output type {item.type!r}",
+                    f"unsupported output type {item.output_type!r}",
                 )
             if isinstance(item, (Call, Result)) and item.counter < 0:
                 yield self.violation(

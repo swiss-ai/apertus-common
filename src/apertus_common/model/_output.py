@@ -76,14 +76,15 @@ def validate_header_json(value: object) -> None:
 
 
 class UnknownOutput(OutputMessage, frozen=True):
-    type: MessageType = Field(
+    type: Literal["unknown_output"] = "unknown_output"
+    output_type: MessageType = Field(
         json_schema_extra={
             "not": {"enum": [name for name in sorted(KNOWN_OUTPUT_TYPES)]}
         }
     )
     headers: HeaderJsonObject = Field(default_factory=dict)
 
-    @field_validator("type")
+    @field_validator("output_type")
     @classmethod
     def _unknown(cls, value: str) -> str:
         if value in KNOWN_OUTPUT_TYPES:

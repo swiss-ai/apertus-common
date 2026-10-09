@@ -34,6 +34,7 @@ from apertus_common.model import (
     Think,
     Thinking,
     ToolSpec,
+    UnknownOutput,
     User,
     Wait,
 )
@@ -324,6 +325,10 @@ def to_openai_output(
             raise AdapterError(
                 "item", index, "output fragment contains an input message"
             )
+        if isinstance(item, UnknownOutput):
+            raise AdapterError(
+                "item", index, f"unsupported output type {item.output_type!r}"
+            )
         headers: JsonObject = (
             {"name": item.name, "counter": item.counter}
             if isinstance(item, Call)
@@ -499,6 +504,10 @@ def to_openai(
                     }
                 )
             else:
+                if isinstance(item, UnknownOutput):
+                    raise AdapterError(
+                        "item", index, f"unsupported output type {item.output_type!r}"
+                    )
                 raise AdapterError(
                     "item", index, f"unsupported message type {item.type!r}"
                 )

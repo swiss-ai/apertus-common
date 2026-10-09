@@ -39,7 +39,9 @@ from apertus_common import (
             '<|out|>future{"nested":[{"x":"y"}]}<|hdr|>\u0308🚀<|/out|>',
             (
                 UnknownOutput(
-                    type="future", headers={"nested": [{"x": "y"}]}, payload="\u0308🚀"
+                    output_type="future",
+                    headers={"nested": [{"x": "y"}]},
+                    payload="\u0308🚀",
                 ),
             ),
         ),

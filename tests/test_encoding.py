@@ -149,7 +149,7 @@ def test_roundtrip_reconstructs_without_running_checks(encoding):
         items=[
             Think(payload="résumé🙂 e\u0301"),
             Call(name="unknown", counter=-1, payload="not JSON <|wait|>"),
-            UnknownOutput(type="extension", headers={"x": "v"}, payload="\x00"),
+            UnknownOutput(output_type="extension", headers={"x": "v"}, payload="\x00"),
             Claim(payload="value"),
             Reply(payload="literal <|out|>reply<|hdr|> text <|/out|>"),
             Wait(),
@@ -455,7 +455,7 @@ def test_added_only_specials_extend_the_vocabulary(artifact):
         Reply(payload="hé🙂 <|out|>"),
         Claim(payload="hé🙂 <|out|>"),
         Call(name="f", counter=-1, payload="hé🙂 <|out|>"),
-        UnknownOutput(type="other", headers={"x": "y"}, payload="hé🙂 <|out|>"),
+        UnknownOutput(output_type="other", headers={"x": "y"}, payload="hé🙂 <|out|>"),
     ],
 )
 def test_loss_weights_follow_message_regions_without_changing_tokens(
@@ -559,3 +559,23 @@ def test_batch_matches_scalar_weighted_and_unweighted_with_single_backend_batch(
         [Conversation()], return_loss_weights=True
     ) == [EncodingResult([encoding.bos_token_id], [0.0])]
     assert backend.encode_batch_fast.call_count == 2
+
+
+@pytest.mark.parametrize("name", ["memo", "user", "wait", "unknown_output"])
+def test_unknown_output_storage_tag_never_enters_wire(encoding, name):
+    message = UnknownOutput(output_type=name, payload="hé🙂 <|out|>")
+    items = [message, Wait()]
+    expected = [
+        encoding.controls.output_start,
+        *encoding.encode_text(name),
+        encoding.controls.header_end,
+        *encoding.encode_text(message.payload),
+        encoding.controls.output_end,
+        encoding.controls.wait,
+    ]
+    assert encoding.encode_items(items) == expected
+    assert encoding.parse_output(expected) == Conversation(items=items)
+    parser = encoding.output_parser()
+    for token in expected:
+        parser.push_tokens([token])
+    assert parser.finish() == Conversation(items=items)

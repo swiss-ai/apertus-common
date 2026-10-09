@@ -156,7 +156,7 @@ class ParserCore:
             message_type = _OUTPUT_TYPES.get(frame.type)
             if message_type is None:
                 return UnknownOutput(
-                    type=frame.type, headers=frame.headers, payload=frame.payload
+                    output_type=frame.type, headers=frame.headers, payload=frame.payload
                 )
             return message_type.model_validate(
                 {**frame.headers, "payload": frame.payload}

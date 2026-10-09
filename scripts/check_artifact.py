@@ -86,7 +86,9 @@ def check_artifact(directory: Path) -> tuple[int, int]:
         items=[
             Think(payload="Inspect 🙂 and e\u0301."),
             Call(name="echo", counter=0, payload="malformed arguments retained"),
-            UnknownOutput(type="extension", headers={"key": "value"}, payload="extra"),
+            UnknownOutput(
+                output_type="extension", headers={"key": "value"}, payload="extra"
+            ),
             Reply(payload=glyphs + samples[2]),
             Wait(),
         ]

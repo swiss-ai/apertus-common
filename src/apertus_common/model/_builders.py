@@ -57,6 +57,9 @@ class ModelBuilder[T: Model]:
     def type(self, value: str) -> Self:
         return self._set("type", value)
 
+    def output_type(self, value: str) -> Self:
+        return self._set("output_type", value)
+
     def headers(self, value: Mapping[str, Any]) -> Self:
         return self._set("headers", value)
 

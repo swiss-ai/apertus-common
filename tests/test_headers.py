@@ -25,7 +25,7 @@ def test_headers_reject_invalid_decoded_strings(value):
     with pytest.raises(ValidationError):
         Document(payload="", from_=value)
     with pytest.raises(ValidationError):
-        UnknownOutput(type="future", headers={"nested": [value]}, payload="")
+        UnknownOutput(output_type="future", headers={"nested": [value]}, payload="")
 
 
 @pytest.mark.parametrize("value", ['a"b', "a=b", "a/b", "a\\b"])
@@ -36,7 +36,7 @@ def test_header_strings_allow_json_escapable_nonwhitespace(value):
 @pytest.mark.parametrize("value", ["", "bad type", "type{", "type<|out|>"])
 def test_unknown_type_word_grammar(value):
     with pytest.raises(ValidationError):
-        UnknownOutput(type=value, payload="")
+        UnknownOutput(output_type=value, payload="")
 
 
 @pytest.mark.parametrize("field", ["from", "id"])
@@ -44,7 +44,7 @@ def test_document_provenance_values_are_nonempty_when_present(field):
     values = {"from": "user", "id": "a1", field: ""}
     with pytest.raises(ValidationError):
         Document(payload="", from_=values["from"], id=values["id"])
-    record = {"direction": "input", "type": "document", "payload": "", **values}
+    record = {"type": "document", "payload": "", **values}
     with pytest.raises(ValidationError):
         Document.from_json(json.dumps(record))
 

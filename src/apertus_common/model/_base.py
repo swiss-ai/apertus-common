@@ -334,7 +334,7 @@ class Model(
         schema = handler(core_schema)
         properties = schema.get("properties", {})
         required = schema.setdefault("required", [])
-        for field in ("direction", "type", "schema_version"):
+        for field in ("type", "schema_version"):
             if field in properties and field not in required:
                 required.append(field)
         return schema
@@ -346,8 +346,6 @@ class Model(
         try:
             value = strict_json_loads(data)
             _require_discriminators(cls, value)
-            if "schema_version" in cls.model_fields:
-                value = _upgrade_native_conversation(value)
         except (ValueError, UnicodeError) as error:
             raise json_validation_error(cls, data, error) from error
         if cls in (Message, InputMessage, OutputMessage):
@@ -423,32 +421,21 @@ def _require_message_discriminators(value: object) -> None:
     if not isinstance(value, dict):
         return
     data = cast(dict[str, object], value)
-    if "type" not in data or (data.get("type") != "wait" and "direction" not in data):
-        raise ValueError("native messages require direction and type discriminators")
-
-
-def _upgrade_native_conversation(value: Any) -> Any:
-    if not isinstance(value, dict):
-        return value
-    data = cast(dict[str, object], value)
-    if type(data.get("schema_version")) is not int or data["schema_version"] != 1:
-        return data
-    records: list[object] = [data.get("system")]
-    items = data.get("items")
-    if isinstance(items, list):
-        records.extend(cast(list[object], items))
-    if any(isinstance(record, dict) and "loss_weight" in record for record in records):
-        raise ValueError("loss_weight requires native schema_version 2")
-    return {**data, "schema_version": 2}
+    if "type" not in data:
+        raise ValueError("native messages require a type discriminator")
 
 
 class Message(Model, frozen=True):
     """Common base for native messages; construct a concrete message type."""
 
-    direction: Literal["in", "out"]
     type: MessageType
     payload: UnicodeScalarString
     loss_weight: LossWeight = None
+
+    @property
+    def direction(self) -> Literal["in", "out"]:
+        """Envelope direction, supplied by the concrete input/output class."""
+        raise NotImplementedError("construct a concrete message type")
 
     @model_validator(mode="before")
     @classmethod
@@ -459,12 +446,15 @@ class Message(Model, frozen=True):
 
 
 class InputMessage(Message, frozen=True):
-    direction: Literal["in"] = "in"
+    @property
+    def direction(self) -> Literal["in"]:
+        return "in"
 
 
 class OutputMessage(Message, frozen=True):
-    direction: Literal["out"] = "out"
+    @property
+    def direction(self) -> Literal["out"]:
+        return "out"
 
 
-KNOWN_INPUT_TYPES = frozenset({"host", "result", "user", "document"})
 KNOWN_OUTPUT_TYPES = frozenset({"think", "reply", "claim", "call"})

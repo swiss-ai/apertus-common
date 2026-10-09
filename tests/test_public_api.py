@@ -103,8 +103,11 @@ def test_json_schema_encodes_runtime_constraints() -> None:
 
     assert schema["$id"] == "urn:apertus-common:native:2"
     assert "schema_version" in schema["required"]
-    assert "reply" in definitions["UnknownOutput"]["properties"]["type"]["not"]["enum"]
-    assert {"direction", "type", "counter", "name", "payload"} <= set(
+    assert (
+        "reply"
+        in definitions["UnknownOutput"]["properties"]["output_type"]["not"]["enum"]
+    )
+    assert {"type", "counter", "name", "payload"} <= set(
         definitions["Call"]["required"]
     )
     assert "ImagePart" not in definitions
@@ -120,12 +123,11 @@ def test_json_schema_accepts_dumps_and_rejects_invalid_models() -> None:
     invalid_models = [
         {"items": []},
         {"schema_version": 3, "items": []},
-        {"schema_version": 2, "items": [{"type": "reply", "payload": "x"}]},
+        {"schema_version": 2, "items": [{"payload": "x"}]},
         {
             "schema_version": 2,
             "items": [
                 {
-                    "direction": "out",
                     "type": "call",
                     "name": "f",
                     "counter": True,
@@ -137,7 +139,6 @@ def test_json_schema_accepts_dumps_and_rejects_invalid_models() -> None:
             "schema_version": 2,
             "items": [
                 {
-                    "direction": "in",
                     "type": "user",
                     "payload": [{"part": "image", "ref": "asset://example"}],
                 }
@@ -170,34 +171,32 @@ def test_json_schema_dynamic_anchors_are_unique() -> None:
     "item",
     [
         {
-            "direction": "out",
             "type": "call",
             "name": "two words",
             "counter": 0,
             "payload": "",
         },
         {
-            "direction": "out",
             "type": "call",
             "name": "trailing\n",
             "counter": 0,
             "payload": "",
         },
-        {"direction": "out", "type": "two words", "payload": ""},
-        {"direction": "out", "type": "trailing\n", "payload": ""},
+        {"type": "unknown_output", "output_type": "two words", "payload": ""},
+        {"type": "unknown_output", "output_type": "trailing\n", "payload": ""},
         {
-            "direction": "out",
-            "type": "memo",
+            "type": "unknown_output",
+            "output_type": "memo",
             "headers": {"key": [{"nested": "two words"}]},
             "payload": "",
         },
         {
-            "direction": "out",
-            "type": "memo",
+            "type": "unknown_output",
+            "output_type": "memo",
             "headers": {"key": [{"bad key": True}]},
             "payload": "",
         },
-        {"direction": "out", "type": "reply", "payload": "\n\ud800"},
+        {"type": "reply", "payload": "\n\ud800"},
     ],
 )
 def test_exported_schema_rejects_invalid_header_and_unicode_values(

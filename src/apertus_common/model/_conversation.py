@@ -2,14 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Literal, cast
+from typing import TYPE_CHECKING, Annotated, ClassVar, Literal
 
 from pydantic import (
-    Discriminator,
     Field,
     GetJsonSchemaHandler,
-    Tag,
     TypeAdapter,
     field_validator,
 )
@@ -17,8 +14,6 @@ from pydantic.json_schema import JsonSchemaValue
 from pydantic_core import CoreSchema
 
 from apertus_common.model._base import (
-    KNOWN_INPUT_TYPES,
-    KNOWN_OUTPUT_TYPES,
     ImmutableList,
     LossWeight,
     Model,
@@ -36,52 +31,22 @@ class Wait(Model, frozen=True):
     loss_weight: LossWeight = None
 
 
-def _item_tag(value: Any) -> str | None:
-    direction = (
-        cast(Mapping[str, Any], value).get("direction")
-        if isinstance(value, Mapping)
-        else getattr(value, "direction", None)
-    )
-    kind = (
-        cast(Mapping[str, Any], value).get("type")
-        if isinstance(value, Mapping)
-        else getattr(value, "type", None)
-    )
-    if direction is None and kind == "wait":
-        return "wait"
-    if not isinstance(kind, str):
-        return None
-    if direction == "in" and kind in KNOWN_INPUT_TYPES:
-        return f"in:{kind}"
-    if direction == "out":
-        return f"out:{kind}" if kind in KNOWN_OUTPUT_TYPES else "out:*"
-    return None
-
-
 MessageValue = Annotated[
-    Annotated[Host, Tag("in:host")]
-    | Annotated[User, Tag("in:user")]
-    | Annotated[Document, Tag("in:document")]
-    | Annotated[Result, Tag("in:result")]
-    | Annotated[Think, Tag("out:think")]
-    | Annotated[Reply, Tag("out:reply")]
-    | Annotated[Claim, Tag("out:claim")]
-    | Annotated[Call, Tag("out:call")]
-    | Annotated[UnknownOutput, Tag("out:*")],
-    Discriminator(_item_tag),
+    Host | User | Document | Result | Think | Reply | Claim | Call | UnknownOutput,
+    Field(discriminator="type"),
 ]
 ConversationItem = Annotated[
-    Annotated[Host, Tag("in:host")]
-    | Annotated[User, Tag("in:user")]
-    | Annotated[Document, Tag("in:document")]
-    | Annotated[Result, Tag("in:result")]
-    | Annotated[Think, Tag("out:think")]
-    | Annotated[Reply, Tag("out:reply")]
-    | Annotated[Claim, Tag("out:claim")]
-    | Annotated[Call, Tag("out:call")]
-    | Annotated[UnknownOutput, Tag("out:*")]
-    | Annotated[Wait, Tag("wait")],
-    Discriminator(_item_tag),
+    Host
+    | User
+    | Document
+    | Result
+    | Think
+    | Reply
+    | Claim
+    | Call
+    | UnknownOutput
+    | Wait,
+    Field(discriminator="type"),
 ]
 MESSAGE_ADAPTER: TypeAdapter[MessageValue] = TypeAdapter(MessageValue)
 

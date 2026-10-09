@@ -371,7 +371,7 @@ def test_unrepresentable_history_boundaries_require_explicit_policy(
     [
         Host(payload="x"),
         Document(payload="x"),
-        UnknownOutput(type="future", payload="x"),
+        UnknownOutput(output_type="future", payload="x"),
     ],
 )
 def test_no_generic_loss_policy_for_unsupported_native_messages(item: Any) -> None:

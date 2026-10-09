@@ -58,9 +58,10 @@ restored = Conversation.from_json(record)
 assert restored == conversation
 ```
 
-The native object has `schema_version`, `system` and `items`. New serialization
-uses v2; loading upgrades unweighted v1 records. The pre-0.2 pilot format is
-incompatible. OpenAI messages and legacy dataset records require conversion.
+The native object has `schema_version: 2`, `system` and `items`. Messages use
+`type` alone, such as `{"type":"user","payload":"Hello"}`; direction is derived.
+Only this schema is accepted, with no migration of older records. OpenAI messages
+and legacy dataset records require conversion.
 
 Details: [storage contract and JSON layout](docs/design.md#native-models-and-storage),
 [dataset notebook](examples/dataset_examples.ipynb).

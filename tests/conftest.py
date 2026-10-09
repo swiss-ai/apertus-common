@@ -41,7 +41,7 @@ def full_cast() -> Conversation:
             Call(name="weather", counter=0, payload='{"city":"Zurich"}'),
             Wait(),
             Result(name="weather", counter=0, payload='{"tempC":20}'),
-            UnknownOutput(type="memo", payload="extra"),
+            UnknownOutput(output_type="memo", payload="extra"),
             Claim(payload="20"),
             Reply(payload="20 degrees."),
             Wait(),

@@ -32,8 +32,8 @@ def test_system_cannot_be_an_item():
 
 def test_unknown_inputs_and_old_items_are_rejected():
     for item in (
-        {"direction": "in", "type": "future", "payload": ""},
-        {"direction": "out", "type": "assistant", "payload": "", "extras": {}},
+        {"type": "future", "payload": ""},
+        {"type": "assistant", "payload": "", "extras": {}},
     ):
         with pytest.raises(ValidationError):
             Conversation(items=[item])

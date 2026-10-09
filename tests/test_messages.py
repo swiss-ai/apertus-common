@@ -48,11 +48,11 @@ def test_bases_are_not_constructible(cls):
 def test_document_optional_provenance_and_unknown_output():
     assert Document(payload="text").from_ is None
     unknown = UnknownOutput(
-        type="future", headers={"nested": {"flag": True}}, payload="raw"
+        output_type="future", headers={"nested": {"flag": True}}, payload="raw"
     )
     assert Message.from_json(unknown.to_json()) == unknown
     with pytest.raises(ValidationError):
-        UnknownOutput(type="call", payload="")
+        UnknownOutput(output_type="call", payload="")
 
 
 def test_call_authoring_and_builders():

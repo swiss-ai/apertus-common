@@ -67,7 +67,7 @@ def test_result_think_claim_and_unknown_output_envelopes():
             Result(name="get_weather", counter=4, payload='{"tempC":24}'),
             Think(payload="Plan."),
             Claim(payload='{"x":3}'),
-            UnknownOutput(type="quack", headers={"k": "v"}, payload="x"),
+            UnknownOutput(output_type="quack", headers={"k": "v"}, payload="x"),
         ]
     )
     assert (
