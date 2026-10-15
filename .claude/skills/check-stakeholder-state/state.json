@@ -2,7 +2,7 @@
   "last_run": "2026-10-06T14:14:45+00:00",
   "repositories": {
     "apertus-2-format-spec-proposal": {
-      "library_baseline": "85874b84605f2a0452d53fe5874cc5eddac1b7f4",
+      "library_baseline": "30edd78be80719c0d4f909b561d974ef2ed300c2",
       "branches": {
         "origin/backup/main": "5fe0a0e3ea33b47112646f5b0ae8ba84809f2f2d",
         "origin/backup/serving-rules": "ac940563dfbc74cf22fda3308f784f59b7352d8d",

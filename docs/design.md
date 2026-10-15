@@ -1,12 +1,11 @@
 # Implemented design
 
 `apertus-common` implements the text-only Apertus 2 profile at specification
-revision `85874b84605f2a0452d53fe5874cc5eddac1b7f4`. The external format and
-profile are authoritative. Leading BOS, an always-present system `tools` array
-and non-empty tool names also follow the decisions proposed in
-[spec PR #11](https://github.com/swiss-ai/apertus-2-format-spec-proposal/pull/11),
-which are not yet part of this baseline. Scope, integration plans and remaining
-release gates are maintained in the optional local-only `DEVELOPMENT.md`.
+revision `30edd78be80719c0d4f909b561d974ef2ed300c2`, which includes the
+leading BOS, always-present system `tools` array and non-empty tool names from
+[spec PR #11](https://github.com/swiss-ai/apertus-2-format-spec-proposal/pull/11).
+The external format and profile are authoritative. Scope, integration plans and
+remaining release gates are maintained in the optional local-only `DEVELOPMENT.md`.
 
 ## Architecture
 

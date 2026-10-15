@@ -240,10 +240,10 @@ Four executable, type-checked notebooks cover
 [parsing](examples/parsing_examples.ipynb).
 Launch them with `uv run --with jupyterlab jupyter lab examples/`.
 
-The external [format specification](https://github.com/swiss-ai/apertus-2-format-spec-proposal/blob/85874b84605f2a0452d53fe5874cc5eddac1b7f4/spec.md)
-and [Apertus 2 profile](https://github.com/swiss-ai/apertus-2-format-spec-proposal/tree/85874b84605f2a0452d53fe5874cc5eddac1b7f4/profile/apertus_2)
-are authoritative. The implemented baseline is revision `85874b8`, with BOS,
-system `tools` and tool-name decisions from spec PR #11 documented in
+The external [format specification](https://github.com/swiss-ai/apertus-2-format-spec-proposal/blob/30edd78be80719c0d4f909b561d974ef2ed300c2/spec.md)
+and [Apertus 2 profile](https://github.com/swiss-ai/apertus-2-format-spec-proposal/tree/30edd78be80719c0d4f909b561d974ef2ed300c2/profile/apertus_2)
+are authoritative. The implemented baseline is revision `30edd78`, which
+includes the BOS, system `tools` and tool-name decisions from spec PR #11; see
 [design.md](docs/design.md). Tokenizer artifacts live in
 [apertus-omni-tokenizer](https://github.com/swiss-ai/apertus-omni-tokenizer).
 The library is verified against the instruct artifact from tokenizer PR #35 at
