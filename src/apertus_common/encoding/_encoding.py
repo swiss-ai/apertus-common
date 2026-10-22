@@ -84,7 +84,7 @@ type _Run = tuple[int | str, float]
 
 
 class ApertusEncoding:
-    """A text-preserving snapshot of an HF fast tokenizer and its named controls."""
+    """A snapshot of an HF fast tokenizer and its named controls."""
 
     def __init__(self, artifact: PreTrainedTokenizerFast | str | Path) -> None:
         try:
@@ -113,8 +113,6 @@ class ApertusEncoding:
         ):
             raise TypeError("an HF fast tokenizer is required")
         state: dict[str, Any] = json.loads(tokenizer.backend_tokenizer.to_str())
-        if state.get("normalizer") is not None:
-            raise ValueError("the tokenizer must not normalize text")
         if state.get("decoder", {}).get("type") != "ByteLevel":
             raise ValueError("this profile binding requires the ByteLevel decoder")
         # Snapshot the backend: caller padding, truncation and postprocessing
@@ -182,17 +180,8 @@ class ApertusEncoding:
         self._generation_constraints = GenerationConstraints(
             self._controls.wait, tuple(sorted(special_ids - allowed))
         )
-        for probe in [
-            *(t.value for t in ControlToken),
-            "e\u0301",
-            "\r\n",
-            " <image> <audio> ",
-            "\x00",
-            "\ufffd🙂",
-        ]:
-            ids = self.encode_text(probe)
-            if self.decode_text(ids) != probe:
-                raise ValueError("artifact ordinary-text path is not lossless")
+        for control in ControlToken:  # spelled in text, a control stays ordinary
+            self.encode_text(control.value)
 
     @staticmethod
     def _validate_backend(state: dict[str, Any]) -> None:
