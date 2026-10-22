@@ -56,7 +56,8 @@ are conformance findings. Header strings cannot contain decoded whitespace,
 and document `from` and `id` must be non-empty when present. Tool, `call` and
 `result` names must be non-empty; the parser reports an empty call name as an
 `INVALID_HEADER` failure.
-Payload whitespace and Unicode are preserved, without normalization.
+Models preserve payload whitespace and Unicode; token encoding applies the
+tokenizer's normalizer.
 
 Every model has `builder()`, `from_json()`, `to_json()` and `check()`.
 Builders accumulate values through semantic setters and produce immutable
@@ -215,9 +216,11 @@ roles (`input_start_token`, `input_end_token`, `output_start_token`,
 `output_end_token`, `header_end_token`, `wait_token`) and standard `pad_token`
 identify the seven controls, and the standard `bos_token` names a registered
 special token distinct from them. Loading verifies their spellings, IDs and
-special registration, the full backend special inventory, and a lossless
-BPE/ByteLevel configuration without normalization. It snapshots the backend, disables its
-padding, truncation and postprocessor, and never changes the caller's tokenizer.
+special registration, the full backend special inventory, and a BPE/ByteLevel
+configuration whose merges cannot produce special IDs. The tokenizer's own normalizer
+(NFC for Apertus 2 instruct) applies to ordinary text, so decoding returns the
+normalized form. It snapshots the backend, disables its padding, truncation and
+postprocessor, and never changes the caller's tokenizer.
 All backend special IDs are excluded from content, including unnamed reserves;
 HF `all_special_ids` alone is insufficient. No binding sidecar is required.
 The tokenizer repository's registry and checksums establish artifact provenance.

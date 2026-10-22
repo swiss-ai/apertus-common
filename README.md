@@ -246,7 +246,8 @@ are authoritative. The implemented baseline is revision `85874b8`, with BOS,
 system `tools` and tool-name decisions from spec PR #11 documented in
 [design.md](docs/design.md). Tokenizer artifacts live in
 [apertus-omni-tokenizer](https://github.com/swiss-ai/apertus-omni-tokenizer).
-The library is verified against the instruct artifact from tokenizer PR #35;
+The library is verified against the instruct artifact from tokenizer PR #35 at
+`3752b12`, which normalizes text with NFC;
 external rollout notes are maintained locally in `DEVELOPMENT.md`.
 
 ## Development

@@ -105,6 +105,17 @@ def test_ordinary_text_is_verbatim_and_never_special(encoding):
         assert encoding.decode_text(ids) == payload
 
 
+def test_normalizer_changes_ordinary_text_only(artifact):
+    state = json.loads((artifact / "tokenizer.json").read_bytes())
+    state["normalizer"] = {"type": "NFC"}
+    write_state(artifact, state)
+    encoding = load_encoding(artifact)
+    assert encoding.encode_text("e\u0301") == encoding.encode_text("é")
+    items = [Reply(payload="literal <|out|> and <|other|> é"), Wait()]
+    ids = encoding.encode_items(items)
+    assert encoding.parse_output(ids) == Conversation(items=items)
+
+
 @pytest.mark.parametrize("legacy_merges", [False, True])
 def test_bpe_merge_cannot_produce_special_id(artifact, legacy_merges):
     state = json.loads((artifact / "tokenizer.json").read_text())
@@ -336,7 +347,6 @@ def test_invalid_ordinary_text_fails(encoding, payload):
         "duplicate-id",
         "ordinary-added",
         "prefix-space",
-        "normalizer",
         "missing-byte",
     ],
 )
@@ -361,8 +371,6 @@ def test_artifact_rejects_unsafe_backend(artifact, damage):
         state["added_tokens"][7]["special"] = False
     elif damage == "prefix-space":
         state["pre_tokenizer"]["add_prefix_space"] = True
-    elif damage == "normalizer":
-        state["normalizer"] = {"type": "Lowercase"}
     elif damage == "missing-byte":
         token_id = state["model"]["vocab"].pop("Z")
         state["model"]["vocab"]["ZZ"] = token_id
