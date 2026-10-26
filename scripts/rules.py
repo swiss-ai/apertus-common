@@ -1,6 +1,6 @@
 """Print the conformance rule table.
 
-Run with ``make rules`` or ``uv run python scripts/rules.py``.
+Run with ``make rules`` or ``uv run --locked python scripts/rules.py``.
 """
 
 from __future__ import annotations

@@ -7,14 +7,13 @@ from dataclasses import replace
 from itertools import chain
 from typing import ClassVar
 
-from apertus_common.checker._context import CheckContext
 from apertus_common.checker._report import Unevaluated, Violation
-from apertus_common.checker.rules._base import Checker, CheckValue, Rule
-from apertus_common.checker.rules._view import view
+from apertus_common.checker.rules._base import Rule
+from apertus_common.checker.rules._view import CheckView, ViewChecker
 from apertus_common.model import Call, Document, Result, UnknownOutput
 
 
-class ProfileChecker(Checker):
+class ProfileChecker(ViewChecker):
     def __init__(self, *, allow_loss_weights: bool = False) -> None:
         self._allow_loss_weights = allow_loss_weights
 
@@ -32,10 +31,7 @@ class ProfileChecker(Checker):
         Rule("profile/loss-weight", "training loss annotations require opt-in"),
     )
 
-    def check(
-        self, value: CheckValue, context: CheckContext | None = None
-    ) -> Iterable[Violation | Unevaluated]:
-        current = view(value, context)
+    def check_view(self, current: CheckView) -> Iterable[Violation | Unevaluated]:
         if not self._allow_loss_weights:
             for weighted, location in chain(current.systems, current.items):
                 if weighted.loss_weight is not None:

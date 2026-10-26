@@ -16,6 +16,7 @@ from apertus_common.checker.rules._base import Checker, CheckValue, Rule
 from apertus_common.checker.rules._conversation import ConversationChecker
 from apertus_common.checker.rules._profile import ProfileChecker
 from apertus_common.checker.rules._training import TrainingChecker
+from apertus_common.checker.rules._view import CheckView, ViewChecker, view
 
 
 def checkers_for(
@@ -61,12 +62,23 @@ def check_value(
     declared: set[str] = set()
     violations: list[Violation] = []
     unevaluated: list[Unevaluated] = []
+    prepared: CheckView | None = None
     for checker in active:
         ids = [rule.id for rule in checker.rules]
         if len(ids) != len(set(ids)) or declared.intersection(ids):
             raise ValueError("checker rule IDs must be unique within a run")
         declared.update(ids)
-        for finding in checker.check(value, context):
+        check = checker.check
+        if (
+            isinstance(checker, ViewChecker)
+            and getattr(check, "__func__", None) is ViewChecker.check
+        ):
+            if prepared is None:
+                prepared = view(value, context)
+            findings = checker.check_view(prepared)
+        else:
+            findings = check(value, context)
+        for finding in findings:
             if finding.rule not in ids:
                 raise ValueError(f"checker emitted undeclared rule {finding.rule!r}")
             if isinstance(finding, Violation):

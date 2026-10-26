@@ -9,17 +9,16 @@ from dataclasses import replace
 from typing import TYPE_CHECKING, ClassVar
 
 from apertus_common.checker._arguments import argument_findings, compile_schema
-from apertus_common.checker._context import CheckContext
 from apertus_common.checker._report import Unevaluated, Violation
-from apertus_common.checker.rules._base import Checker, CheckValue, Rule
-from apertus_common.checker.rules._view import view
+from apertus_common.checker.rules._base import Rule
+from apertus_common.checker.rules._view import CheckView, ViewChecker
 from apertus_common.model import Call, ToolSpec
 
 if TYPE_CHECKING:
     from jsonschema.protocols import Validator
 
 
-class ArgumentsChecker(Checker):
+class ArgumentsChecker(ViewChecker):
     """Reusable checker with a bounded, process-local schema compilation cache."""
 
     def __init__(self, schema_cache_size: int = 256) -> None:
@@ -64,10 +63,7 @@ class ArgumentsChecker(Checker):
         Rule("arguments/tool-name", "standalone argument checking uses the named tool"),
     )
 
-    def check(
-        self, value: CheckValue, context: CheckContext | None = None
-    ) -> Iterable[Violation | Unevaluated]:
-        current = view(value, context)
+    def check_view(self, current: CheckView) -> Iterable[Violation | Unevaluated]:
         validators: dict[str, Validator | None] = {}
         for index, tool in enumerate(current.tools or ()):
             try:

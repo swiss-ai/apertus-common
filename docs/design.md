@@ -161,7 +161,10 @@ for weighted training records. Structural loading validates numbers regardless
 of this policy. Context system prompts are checked too; weights do not change
 whether two system configurations agree.
 
-Reuse a checker tuple across records in a worker. `ArgumentsChecker` keeps a
+Reuse a checker tuple across records in a worker. Built-in checks share one
+prepared history view per checking operation; direct checker calls prepare
+their own view, and custom `check()` overrides retain their call path.
+`ArgumentsChecker` keeps a
 bounded process-local LRU cache of compiled schemas and compilation failures,
 defaulting to 256 entries; `schema_cache_size=0` disables caching. Keys include
 the complete schema, its dialect and property order. Findings and their
@@ -359,8 +362,9 @@ Library exceptions derive from `ApertusFormatError`, except the
 | `ArgumentError` | Invalid argument JSON/object |
 | `ConformanceError` | Requested checks failed or were incomplete |
 
-`make all` covers lint, strict typing, exported-type completeness, repository
-invariants, all tests and execution/type-checking of four notebooks. Unit token
+`make all` covers lint, strict typing, exported-type completeness, all tests
+(including rule invariants), notebook checking/execution and isolated base/HF
+wheel installs. `make examples` runs the notebook checks separately. Unit token
 fixtures are explicitly synthetic. `make check-artifact APERTUS_ENCODING=...`
 requires the real artifact and fails if absent. `make bench` reports parser
 throughput and memory; timings are observations, not portability guarantees.

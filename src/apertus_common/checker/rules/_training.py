@@ -5,14 +5,13 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import ClassVar
 
-from apertus_common.checker._context import CheckContext
 from apertus_common.checker._report import Severity, Unevaluated, Violation
-from apertus_common.checker.rules._base import Checker, CheckValue, Rule
-from apertus_common.checker.rules._view import view
+from apertus_common.checker.rules._base import Rule
+from apertus_common.checker.rules._view import CheckView, ViewChecker
 from apertus_common.model import InputMessage, OutputMessage
 
 
-class TrainingChecker(Checker):
+class TrainingChecker(ViewChecker):
     """Warn where turn-based training data leaves an output burst without a wait.
 
     Input during a burst and unfinished histories are valid Apertus 2, so these
@@ -33,10 +32,7 @@ class TrainingChecker(Checker):
         ),
     )
 
-    def check(
-        self, value: CheckValue, context: CheckContext | None = None
-    ) -> Iterable[Violation | Unevaluated]:
-        current = view(value, context)
+    def check_view(self, current: CheckView) -> Iterable[Violation | Unevaluated]:
         if current.standalone:
             return
         previous = None

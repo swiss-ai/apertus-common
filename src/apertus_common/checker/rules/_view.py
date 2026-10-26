@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from abc import abstractmethod
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Literal
 
 from apertus_common.checker._context import CheckContext
-from apertus_common.checker._report import Location
-from apertus_common.checker.rules._base import CheckValue
+from apertus_common.checker._report import Location, Unevaluated, Violation
+from apertus_common.checker.rules._base import Checker, CheckValue
 from apertus_common.model import (
     Conversation,
     Host,
@@ -87,3 +89,16 @@ def view(value: CheckValue, context: CheckContext | None) -> CheckView:
     return CheckView(
         ctx, system, system_location, tuple(systems), tuple(items), tools, standalone
     )
+
+
+class ViewChecker(Checker):
+    """Built-in checks share a prepared view; direct calls still prepare their own."""
+
+    def check(
+        self, value: CheckValue, context: CheckContext | None = None
+    ) -> Iterable[Violation | Unevaluated]:
+        yield from self.check_view(view(value, context))
+
+    @abstractmethod
+    def check_view(self, current: CheckView) -> Iterable[Violation | Unevaluated]:
+        """Yield findings from the same immutable view used by sibling checks."""

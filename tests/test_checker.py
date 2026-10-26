@@ -98,9 +98,13 @@ def test_custom_checker_and_warning():
 
 
 def test_rule_table_unique():
+    from apertus_common.checker._report import RULE_ID_RE
+
     table = rule_table()
     assert len(table) == len({rule.id for rule in table})
-    assert all(rule.description for rule in table)
+    assert all(RULE_ID_RE.fullmatch(rule.id) for rule in table)
+    assert all(rule.description.strip() for rule in table)
+    assert all(checker.rules for checker in checkers_for("full", training=True))
     assert {"training/input-mid-burst", "training/final-wait"} <= {
         rule.id for rule in table
     }
@@ -115,3 +119,57 @@ parse_output_text('<|out|>call{"name":"weather","counter":0}<|hdr|>bad JSON<|/ou
 assert 'jsonschema' not in sys.modules
 """
     subprocess.run([sys.executable, "-c", code], check=True)
+
+
+def test_builtin_checks_share_one_view_per_value(monkeypatch):
+    from apertus_common.checker import _check
+    from apertus_common.checker._report import ConformanceReport, Unevaluated, Violation
+
+    prepared = []
+    original = _check.view
+
+    def observe(value, context):
+        prepared.append(value)
+        return original(value, context)
+
+    monkeypatch.setattr(_check, "view", observe)
+    checks = checkers_for("full", training=True)
+    for value in (
+        Conversation(),
+        Conversation(system=system(), items=[Reply(payload="x")]),
+    ):
+        findings = [finding for checker in checks for finding in checker.check(value)]
+        expected = ConformanceReport(
+            tuple(f for f in findings if isinstance(f, Violation)),
+            tuple(f for f in findings if isinstance(f, Unevaluated)),
+        )
+        assert value.check(checkers=checks) == expected
+    assert len(prepared) == 2 and prepared[0] is not prepared[1]
+
+
+@pytest.mark.parametrize("instance_override", [False, True])
+def test_custom_builtin_override_keeps_control_of_checking(
+    monkeypatch, instance_override
+):
+    from apertus_common import CheckContext, ProfileChecker
+
+    called = []
+
+    class CustomProfile(ProfileChecker):
+        def check(self, value, context=None):
+            called.append((value, context))
+            return iter(())
+
+    value = Conversation(system=SystemPrompt.build(behavior="one"))
+    context = CheckContext(
+        prefix=Conversation(system=SystemPrompt.build(behavior="two"))
+    )
+    checker = CustomProfile()
+    if instance_override:
+        wrapped = ProfileChecker()
+        monkeypatch.setattr(wrapped, "check", checker.check)
+        checker = wrapped
+    # Custom checks may deliberately ignore evidence that built-ins would reject.
+    assert value.check(checkers=[checker], context=context).ok
+    assert called == [(value, context)]
+    assert value.check(checkers=[], context=context).ok

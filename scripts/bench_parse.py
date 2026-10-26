@@ -1,6 +1,6 @@
 """Report parse throughput and peak memory, with no hardware-specific gate.
 
-Run ``uv run python scripts/bench_parse.py``; add ``--artifact PATH`` for the
+Run ``uv run --locked python scripts/bench_parse.py``; add ``--artifact PATH`` for the
 verified tokenizer artifact. Cases cover long payloads, many messages and small
 chunks. Event queues are drained as a streaming consumer would drain them.
 """

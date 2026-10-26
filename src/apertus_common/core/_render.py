@@ -49,30 +49,24 @@ def _message_atoms(message: Message) -> Iterator[WireAtom]:
     )
 
 
-def to_wire(conversation: Conversation) -> tuple[WireAtom, ...]:
-    """Emit envelopes without synthetic whitespace, waits, or sorting."""
-    atoms: list[WireAtom] = []
+def to_wire(conversation: Conversation) -> Iterator[WireAtom]:
+    """Stream envelopes without synthetic whitespace, waits, or sorting."""
     if conversation.system is not None:
         # `tools` is always present; an empty array means no tools.
         system = conversation.system.model_dump(
             mode="json", by_alias=True, exclude_none=True, exclude={"loss_weight"}
         )
-        atoms.extend(
-            (
-                Control(ControlToken.IN),
-                Text("system", "structural"),
-                Control(ControlToken.HDR),
-                Text(_json(system), "payload", conversation.system.loss_weight or 0.0),
-                Control(ControlToken.IN_END),
-            )
-        )
+        yield Control(ControlToken.IN)
+        yield Text("system", "structural")
+        yield Control(ControlToken.HDR)
+        yield Text(_json(system), "payload", conversation.system.loss_weight or 0.0)
+        yield Control(ControlToken.IN_END)
     for item in conversation.items:
         if isinstance(item, Wait):
             weight = 1.0 if item.loss_weight is None else item.loss_weight
-            atoms.append(Control(ControlToken.WAIT, weight))
+            yield Control(ControlToken.WAIT, weight)
         else:
-            atoms.extend(_message_atoms(item))
-    return tuple(atoms)
+            yield from _message_atoms(item)
 
 
 def render_str(conversation: Conversation) -> str:

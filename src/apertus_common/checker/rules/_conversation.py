@@ -5,10 +5,10 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import ClassVar
 
-from apertus_common.checker._context import CallState, CheckContext, HostClosure
+from apertus_common.checker._context import CallState, HostClosure
 from apertus_common.checker._report import Location, Severity, Unevaluated, Violation
-from apertus_common.checker.rules._base import Checker, CheckValue, Rule
-from apertus_common.checker.rules._view import view
+from apertus_common.checker.rules._base import Rule
+from apertus_common.checker.rules._view import CheckView, ViewChecker
 from apertus_common.model import (
     Call,
     Claim,
@@ -22,7 +22,7 @@ from apertus_common.model import (
 )
 
 
-class ConversationChecker(Checker):
+class ConversationChecker(ViewChecker):
     rules: ClassVar[tuple[Rule, ...]] = (
         Rule("conversation/system", "complete histories have a system prompt"),
         Rule("conversation/declared-tool", "calls name a declared tool"),
@@ -49,10 +49,7 @@ class ConversationChecker(Checker):
         ),
     )
 
-    def check(
-        self, value: CheckValue, context: CheckContext | None = None
-    ) -> Iterable[Violation | Unevaluated]:
-        current = view(value, context)
+    def check_view(self, current: CheckView) -> Iterable[Violation | Unevaluated]:
         ctx = current.context
         checkpoint = ctx.checkpoint
         complete = ctx.history == "complete"

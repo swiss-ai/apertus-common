@@ -238,7 +238,7 @@ Four executable, type-checked notebooks cover
 [validation](examples/validation_examples.ipynb),
 [datasets](examples/dataset_examples.ipynb) and
 [parsing](examples/parsing_examples.ipynb).
-Launch them with `uv run --with jupyterlab jupyter lab examples/`.
+Launch them with `uv run --locked --with jupyterlab jupyter lab examples/`.
 
 The external [format specification](https://github.com/swiss-ai/apertus-2-format-spec-proposal/blob/30edd78be80719c0d4f909b561d974ef2ed300c2/spec.md)
 and [Apertus 2 profile](https://github.com/swiss-ai/apertus-2-format-spec-proposal/tree/30edd78be80719c0d4f909b561d974ef2ed300c2/profile/apertus_2)
@@ -264,7 +264,7 @@ make install           # locked sync: creates .venv/ and installs dev tools
 make test              # verify the setup
 ```
 
-No manual venv activation needed: prefix commands with `uv run`, or point
+No manual venv activation needed: prefix commands with `uv run --locked`, or point
 your IDE's interpreter at `.venv/`. Dependencies are managed with
 `uv add` / `uv add --dev`, never by editing `pyproject.toml` by hand.
 
@@ -272,22 +272,24 @@ your IDE's interpreter at `.venv/`. Dependencies are managed with
 
 ```sh
 make test                     # models, checks, mapping, text/token parsing
-uv run pytest -k stream        # a focused subset
+uv run --locked pytest -k stream        # a focused subset
 ```
 
 ### Formatting and checkers
 
 All tooling runs through the `Makefile`; after `make install`, `make all`
-runs the same checks as CI:
+runs the same checks as CI. Commands require the committed lockfile to stay
+unchanged. Distribution smoke tests additionally resolve consumer dependencies
+from the wheel metadata in a temporary environment:
 
 ```sh
 make            # list targets
 make format     # apply formatting and autofixes, including notebooks
 make lint       # style checks, including notebooks
-make typecheck  # strict mypy + pyright + notebook checks + API completeness
-make check-repo # repo invariants (unique, well-formed rule ids)
+make typecheck  # strict mypy + pyright + API completeness
+make examples   # type-check and execute notebooks
 make rules      # print the conformance rule table
-make test       # test suite
+make test       # test suite, including conformance-rule invariants
 make all        # everything CI runs
 make check-artifact APERTUS_ENCODING=/path/to/artifact  # required real artifact
 make harness APERTUS_ENCODING=/path/to/artifact         # token continuation example
@@ -295,7 +297,11 @@ make bench APERTUS_ENCODING=/path/to/artifact           # text/token throughput
 make prepare APERTUS_ENCODING=/path/to/artifact         # weighted data example
 make bench-prepare APERTUS_ENCODING=/path/to/artifact   # preparation throughput
 make build      # build wheel and source distribution
+make check-dist # build and smoke-test isolated base and HF wheel installs
 ```
+
+Set `APERTUS_ENCODING=/path/to/Apertus_2_instruct` when running `make examples`
+to include the tokenizer-backed encoding sections.
 
 Config lives in `pyproject.toml` (`[tool.ruff]`, `[tool.mypy]`,
 `[tool.pyright]`). Both type checkers stay green: downstream users run

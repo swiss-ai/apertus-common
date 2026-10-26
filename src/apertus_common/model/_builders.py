@@ -87,8 +87,14 @@ class ModelBuilder[T: Model]:
     def tools(self, value: Sequence[ToolSpec]) -> Self:
         return self._set("tools", list(value))
 
+    def _append(self, field: str, value: object) -> Self:
+        if field not in self._values:
+            self._set(field, [])
+        self._values[field].append(value)
+        return self
+
     def tool(self, value: ToolSpec) -> Self:
-        return self.tools([*self._values.get("tools", ()), value])
+        return self._append("tools", value)
 
     def system(self, value: SystemPrompt) -> Self:
         return self._set("system", value)
@@ -97,7 +103,7 @@ class ModelBuilder[T: Model]:
         return self._set("items", list(value))
 
     def message(self, value: Message | Wait) -> Self:
-        return self.items([*self._values.get("items", ()), value])
+        return self._append("items", value)
 
     def host(self, payload: str, *, loss_weight: float | None = None) -> Self:
         return self.message(Host(payload=payload, loss_weight=loss_weight))
