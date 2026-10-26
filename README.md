@@ -192,7 +192,7 @@ unsupported conversions raise `AdapterError`. This is a supported subset,
 not an exact round-trip guarantee for arbitrary OpenAI or native records.
 
 Details: [supported mappings and loss policies](docs/design.md#openai-mapping),
-[OpenAI examples](examples/dataset_examples.ipynb).
+[format comparison, conversion losses and training/inference examples](examples/openai_conversion_examples.ipynb).
 
 ## Prepare datasets
 
@@ -233,10 +233,11 @@ Details: [native input format](docs/design.md#native-models-and-storage),
 - [AGENTS.md](AGENTS.md): contributor instructions and reference repositories.
 - [future.md](future.md): ideas outside committed plans.
 
-Four executable, type-checked notebooks cover
+Five executable, type-checked notebooks cover
 [construction](examples/core_format_examples.ipynb),
 [validation](examples/validation_examples.ipynb),
-[datasets](examples/dataset_examples.ipynb) and
+[datasets](examples/dataset_examples.ipynb),
+[OpenAI conversion and training/inference effects](examples/openai_conversion_examples.ipynb) and
 [parsing](examples/parsing_examples.ipynb).
 Launch them with `uv run --locked --with jupyterlab jupyter lab examples/`.
 

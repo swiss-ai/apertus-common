@@ -309,6 +309,10 @@ text. Engine termination reasons are separate from parsing success.
 
 ## OpenAI mapping
 
+The [conversion notebook](../examples/openai_conversion_examples.ipynb) compares
+representations, normalizations, explicit losses and rejected mappings, then
+demonstrates their effect on token order and training weights.
+
 `from_openai(messages, tools=..., reasoning_effort=..., system_defaults=...,
 context=..., policy=...)` constructs native messages and one system prompt.
 `to_openai(conversation, ...)` produces a request; `to_openai_output(fragment,
