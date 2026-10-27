@@ -21,9 +21,14 @@ gates are tracked in DEVELOPMENT.md.
   The implemented revision is recorded in `docs/design.md`. This repository is a
   read-only source of truth; raise conflicts instead of silently deviating.
 - Tokenizer repository: `/Users/rkre/swissai_repos/apertus-omni-tokenizer`.
-  The Apertus 2 instruct artifact is `tokenizers/Apertus_2_instruct` from PR #35
-  (`3752b12`, NFC normalizer) until merged. Consume it through `load_encoding`;
-  never vendor or hand-edit tokenizer files here.
+  The Apertus 2 instruct artifact is `tokenizers/Apertus_2_instruct` on `main`;
+  PR #35 merged at `b801ff1` (same artifact as `3752b12`, NFC normalizer).
+  Inspect upstream `main` (`origin/main` after fetching) and `omnitok/registry.py`,
+  then select a revision matching the target model/profile and record its
+  commit/checksums.
+  Consume it through `load_encoding`, which checks compatibility but does not
+  enforce a Git revision or checksum. Run `make check-artifact` for a selected
+  artifact; never vendor or hand-edit tokenizer files here.
 - Framework integration checkouts (Transformers, vLLM):
   `/Users/rkre/swissai_repos/apertus2-integration-work/`; status and open
   findings are in DEVELOPMENT.md.

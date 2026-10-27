@@ -247,9 +247,14 @@ are authoritative. The implemented baseline is revision `30edd78`, which
 includes the BOS, system `tools` and tool-name decisions from spec PR #11; see
 [design.md](docs/design.md). Tokenizer artifacts live in
 [apertus-omni-tokenizer](https://github.com/swiss-ai/apertus-omni-tokenizer).
-The library is verified against the instruct artifact from tokenizer PR #35 at
-`3752b12`, which normalizes text with NFC;
-external rollout notes are maintained locally in `DEVELOPMENT.md`.
+The instruct artifact is [tokenizers/Apertus_2_instruct](https://github.com/swiss-ai/apertus-omni-tokenizer/tree/main/tokenizers/Apertus_2_instruct)
+on `main`. Tokenizer PR #35 merged at `b801ff1`, verified here with the same
+NFC artifact as `3752b12`. Inspect the latest upstream `main` and
+`omnitok/registry.py` for updates, then select and pin the revision fitting your
+model/profile. Record its commit/checksums and run `make check-artifact` against
+the selected directory. `load_encoding` checks compatibility, not source revision
+or checksums; see the [encoding contract](docs/design.md#rendering-and-encoding).
+External rollout notes are maintained locally in `DEVELOPMENT.md`.
 
 ## Development
 

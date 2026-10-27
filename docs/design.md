@@ -225,9 +225,16 @@ normalized form. It snapshots the backend, disables its padding, truncation and
 postprocessor, and never changes the caller's tokenizer.
 All backend special IDs are excluded from content, including unnamed reserves;
 HF `all_special_ids` alone is insufficient. No binding sidecar is required.
-The tokenizer repository's registry and checksums establish artifact provenance.
 `load_encoding(local_path)` uses HF locally with the optional `hf` dependency;
-artifact acquisition remains the caller's responsibility.
+artifact acquisition and provenance verification remain the caller's responsibility.
+Loading does not inspect Git metadata, verify checksums or enforce a particular
+artifact revision or its agreement with a trained model. Check the latest upstream
+`main` and `omnitok/registry.py` in apertus-omni-tokenizer, choose the instruct
+revision matching the target model/profile, and record its commit and canonical
+checksums. `main` is a discovery point, not an automatically compatible pin.
+The artifact at merged PR #35 revision `b801ff1` is verified here and is identical
+to `3752b12` (NFC). `make check-artifact` checks expected token IDs and behavior;
+it does not authenticate the source revision.
 
 `encode_conversation`, `encode_items` and `encode_text` return token IDs.
 `encode_conversation` encodes a complete sequence and starts with
