@@ -12,7 +12,9 @@ gates are tracked in DEVELOPMENT.md.
   ignored, local-only file owns scope, plans, open decisions, and module/API
   conventions; it is not included in fresh clones.
 - [docs/design.md](docs/design.md) records implemented behavior. Keep it in
-  sync with code; future proposals belong in `DEVELOPMENT.md`.
+  sync with code. Unplanned library ideas belong in
+  [program issue #856](https://github.com/swiss-ai/apertus-program/issues/856);
+  development plans belong in local `DEVELOPMENT.md`, when available.
 - [README.md](README.md) provides the overview, next tasks, upstream links,
   and canonical development commands.
 - Format and profile repository: `/Users/rkre/swissai_repos/apertus-2-format-spec-proposal`.
@@ -21,14 +23,12 @@ gates are tracked in DEVELOPMENT.md.
   The implemented revision is recorded in `docs/design.md`. This repository is a
   read-only source of truth; raise conflicts instead of silently deviating.
 - Tokenizer repository: `/Users/rkre/swissai_repos/apertus-omni-tokenizer`.
-  The Apertus 2 instruct artifact is `tokenizers/Apertus_2_instruct` on `main`;
-  PR #35 merged at `b801ff1` (same artifact as `3752b12`, NFC normalizer).
-  Inspect upstream `main` (`origin/main` after fetching) and `omnitok/registry.py`,
-  then select a revision matching the target model/profile and record its
-  commit/checksums.
-  Consume it through `load_encoding`, which checks compatibility but does not
-  enforce a Git revision or checksum. Run `make check-artifact` for a selected
-  artifact; never vendor or hand-edit tokenizer files here.
+  The [verified instruct baseline](https://github.com/swiss-ai/apertus-omni-tokenizer/tree/b801ff1b00d933d10bba90b0c22307157299faa7/tokenizers/Apertus_2_instruct)
+  is merged on `main` at `b801ff1`. Check upstream `main` and
+  `omnitok/registry.py` for suitable updates; select and record the revision
+  matching the model/profile. Loader requirements are in `docs/design.md`;
+  source revisions/checksums are not enforced. Consume artifacts through
+  `load_encoding`; never vendor or hand-edit tokenizer files here.
 - Framework integration checkouts (Transformers, vLLM):
   `/Users/rkre/swissai_repos/apertus2-integration-work/`; status and open
   findings are in DEVELOPMENT.md.

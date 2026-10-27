@@ -231,7 +231,8 @@ Details: [native input format](docs/design.md#native-models-and-storage),
 - `DEVELOPMENT.md` (optional, local only): development plans, decisions and
   remaining release gates; excluded from Git.
 - [AGENTS.md](AGENTS.md): contributor instructions and reference repositories.
-- [future.md](future.md): ideas outside committed plans.
+- [Program issue #856](https://github.com/swiss-ai/apertus-program/issues/856):
+  library delivery and future considerations.
 
 Five executable, type-checked notebooks cover
 [construction](examples/core_format_examples.ipynb),
@@ -241,20 +242,17 @@ Five executable, type-checked notebooks cover
 [parsing](examples/parsing_examples.ipynb).
 Launch them with `uv run --locked --with jupyterlab jupyter lab examples/`.
 
-The external [format specification](https://github.com/swiss-ai/apertus-2-format-spec-proposal/blob/30edd78be80719c0d4f909b561d974ef2ed300c2/spec.md)
-and [Apertus 2 profile](https://github.com/swiss-ai/apertus-2-format-spec-proposal/tree/30edd78be80719c0d4f909b561d974ef2ed300c2/profile/apertus_2)
-are authoritative. The implemented baseline is revision `30edd78`, which
-includes the BOS, system `tools` and tool-name decisions from spec PR #11; see
-[design.md](docs/design.md). Tokenizer artifacts live in
-[apertus-omni-tokenizer](https://github.com/swiss-ai/apertus-omni-tokenizer).
-The instruct artifact is [tokenizers/Apertus_2_instruct](https://github.com/swiss-ai/apertus-omni-tokenizer/tree/main/tokenizers/Apertus_2_instruct)
-on `main`. Tokenizer PR #35 merged at `b801ff1`, verified here with the same
-NFC artifact as `3752b12`. Inspect the latest upstream `main` and
-`omnitok/registry.py` for updates, then select and pin the revision fitting your
-model/profile. Record its commit/checksums and run `make check-artifact` against
-the selected directory. `load_encoding` checks compatibility, not source revision
-or checksums; see the [encoding contract](docs/design.md#rendering-and-encoding).
-External rollout notes are maintained locally in `DEVELOPMENT.md`.
+The external [format specification](https://github.com/swiss-ai/apertus-2-format-spec-proposal/blob/4f6f170731cfe79c226f3c777204be5e4cb69203/spec.md)
+and [Apertus 2 profile](https://github.com/swiss-ai/apertus-2-format-spec-proposal/blob/4f6f170731cfe79c226f3c777204be5e4cb69203/profile/apertus_2/apertus_2.md)
+are authoritative; the verified specification baseline is `4f6f170` on `v1`.
+The [verified instruct tokenizer](https://github.com/swiss-ai/apertus-omni-tokenizer/tree/b801ff1b00d933d10bba90b0c22307157299faa7/tokenizers/Apertus_2_instruct)
+is the merged `main` revision `b801ff1` (NFC).
+
+`load_encoding` accepts HF fast tokenizers with a compatible ByteLevel BPE backend,
+registered Apertus controls and a distinct BOS token, or a local tokenizer
+directory with the `hf` extra. See the [loader requirements](docs/design.md#rendering-and-encoding).
+Use an artifact matching your model; loading checks structure, not Git revision,
+checksums or model compatibility. External rollout notes stay in local `DEVELOPMENT.md`.
 
 ## Development
 

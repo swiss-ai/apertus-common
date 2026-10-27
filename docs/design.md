@@ -1,22 +1,20 @@
 # Implemented design
 
 `apertus-common` implements the text-only Apertus 2 profile at specification
-revision `30edd78be80719c0d4f909b561d974ef2ed300c2`, which includes the
-leading BOS, always-present system `tools` array and non-empty tool names from
-[spec PR #11](https://github.com/swiss-ai/apertus-2-format-spec-proposal/pull/11).
-The external format and profile are authoritative. Scope, integration plans and
-remaining release gates are maintained in the optional local-only `DEVELOPMENT.md`.
+revision [`4f6f170731cfe79c226f3c777204be5e4cb69203`](https://github.com/swiss-ai/apertus-2-format-spec-proposal/tree/4f6f170731cfe79c226f3c777204be5e4cb69203)
+on `v1`. The external format and profile are authoritative. Scope, integration
+plans and remaining release gates live in the optional local-only `DEVELOPMENT.md`.
 
 ## Architecture
 
-| Package | Responsibility |
-| --- | --- |
-| `model` | Immutable typed messages, builders and versioned native JSON |
-| `core` | Envelope rendering and the shared output framing machine |
-| `checker` | Explicit profile, history and argument checks |
-| `encoding` | Verified local tokenizer binding and token-ID parsing |
-| `parsing` | Diagnostic text parsing and ordered output events |
-| `formats` | Explicit OpenAI request, response and streaming mappings |
+| Package    | Responsibility                                               |
+|------------|--------------------------------------------------------------|
+| `model`    | Immutable typed messages, builders and versioned native JSON |
+| `core`     | Envelope rendering and the shared output framing machine     |
+| `checker`  | Explicit profile, history and argument checks                |
+| `encoding` | Verified local tokenizer binding and token-ID parsing        |
+| `parsing`  | Diagnostic text parsing and ordered output events            |
+| `formats`  | Explicit OpenAI request, response and streaming mappings     |
 
 Public names are listed in each package's `__all__` and re-exported at the
 package root. Internal modules are underscore-prefixed. Encoding loads the
@@ -39,6 +37,11 @@ Its native `type` is always `unknown_output`; `output_type` is the original wire
 name. All messages expose read-only `.direction` derived from their input/output
 class; direction is not a constructor field or serialized metadata.
 `Wait` is a separate item. Known types reject extra fields.
+
+History retention follows the [profile's memory policy](https://github.com/swiss-ai/apertus-2-format-spec-proposal/blob/4f6f170731cfe79c226f3c777204be5e4cb69203/profile/apertus_2/apertus_2.md#context-and-memory-policy).
+The library preserves supplied messages, including zero-loss thinking; the harness
+owns retention and announced compaction. Partial-history checking cannot detect
+messages already removed by the caller.
 
 `SystemPrompt` contains required `thinking` (`low`, `medium`, `high`), optional
 `identity`, `behavior`, `environment`, and tools. Each `ToolSpec` has `name`,
@@ -140,11 +143,11 @@ check the selected data explicitly before encoding it.
 `ConformanceReport`. Conversations default to `full`; other models default to
 `profile`. An explicit checker sequence replaces the preset.
 
-| Mode | Checks |
-| --- | --- |
-| `profile` | Known types, nonnegative counters, document provenance, tool declarations |
+| Mode           | Checks                                                                                                     |
+|----------------|------------------------------------------------------------------------------------------------------------|
+| `profile`      | Known types, nonnegative counters, document provenance, tool declarations                                  |
 | `conversation` | Profile checks plus system presence, call/result history, waits, document IDs and advisory claim placement |
-| `full` | Conversation checks plus argument JSON and declared schemas |
+| `full`         | Conversation checks plus argument JSON and declared schemas                                                |
 
 `checkers_for(mode, allow_loss_weights=False, training=False)` exposes the presets;
 `rule_table()` and `make rules` list all stable rule IDs, including opt-in
@@ -213,28 +216,29 @@ optional compact JSON header, header delimiter, payload and closing control.
 text omits BOS and is diagnostic: literal control spellings inside payloads are
 ambiguous.
 
-`load_encoding(tokenizer)` binds a loaded HF fast tokenizer. Six named extra
-roles (`input_start_token`, `input_end_token`, `output_start_token`,
-`output_end_token`, `header_end_token`, `wait_token`) and standard `pad_token`
-identify the seven controls, and the standard `bos_token` names a registered
-special token distinct from them. Loading verifies their spellings, IDs and
-special registration, the full backend special inventory, and a BPE/ByteLevel
-configuration whose merges cannot produce special IDs. The tokenizer's own normalizer
-(NFC for Apertus 2 instruct) applies to ordinary text, so decoding returns the
-normalized form. It snapshots the backend, disables its padding, truncation and
-postprocessor, and never changes the caller's tokenizer.
-All backend special IDs are excluded from content, including unnamed reserves;
-HF `all_special_ids` alone is insufficient. No binding sidecar is required.
-`load_encoding(local_path)` uses HF locally with the optional `hf` dependency;
-artifact acquisition and provenance verification remain the caller's responsibility.
-Loading does not inspect Git metadata, verify checksums or enforce a particular
-artifact revision or its agreement with a trained model. Check the latest upstream
-`main` and `omnitok/registry.py` in apertus-omni-tokenizer, choose the instruct
-revision matching the target model/profile, and record its commit and canonical
-checksums. `main` is a discovery point, not an automatically compatible pin.
-The artifact at merged PR #35 revision `b801ff1` is verified here and is identical
-to `3752b12` (NFC). `make check-artifact` checks expected token IDs and behavior;
-it does not authenticate the source revision.
+`load_encoding(tokenizer)` binds a loaded HF fast tokenizer; a local directory
+uses HF loading with the optional `hf` dependency. Supported tokenizers require:
+
+- A deterministic BPE model with full ByteLevel byte coverage and decoder,
+  character-preserving pretokenization without prefix insertion, no unknown-token
+  fallback, byte fallback, word affixes or merge bypass, and only special added tokens.
+- Six named extra roles (`input_start_token`, `input_end_token`,
+  `output_start_token`, `output_end_token`, `header_end_token`, `wait_token`)
+  plus `pad_token` naming the seven Apertus controls, with distinct registered IDs.
+- A registered `bos_token` distinct from those controls. Vocabulary IDs must be
+  unique and contiguous; ordinary text and BPE merges must not produce special IDs.
+
+The tokenizer's normalizer applies to ordinary text; the verified instruct
+artifact uses NFC. Loading snapshots the backend, disables padding, truncation
+and postprocessing, and leaves the caller's tokenizer unchanged. All special IDs,
+including unnamed reserves, are excluded from ordinary text. No sidecar is required.
+
+The [verified baseline](https://github.com/swiss-ai/apertus-omni-tokenizer/tree/b801ff1b00d933d10bba90b0c22307157299faa7/tokenizers/Apertus_2_instruct)
+is the instruct artifact merged on `main` at `b801ff1`. Other revisions can
+load if they meet the requirements above. Callers choose model-compatible files
+and verify their provenance: loading does not enforce Git revision, checksums or
+agreement with a trained model. `make check-artifact` tests the baseline's expected
+IDs and behavior, not source provenance.
 
 `encode_conversation`, `encode_items` and `encode_text` return token IDs.
 `encode_conversation` encodes a complete sequence and starts with
@@ -259,13 +263,13 @@ with equally long `token_ids` and `loss_weights` lists; batching returns a list
 of those results. IDs are unchanged by weights or the flag. No weight vector
 is allocated on the default IDs-only path.
 
-| Region | Default | Explicit annotation |
-| --- | --- | --- |
-| BOS | 0 | Always 0 |
-| Input/system opening, header and closing | 0 | Always 0 |
-| Input/system payload | 0 | Message weight |
-| Entire output frame, including header and controls | 1 | Message weight |
-| Wait | 1 | Wait's own weight, independent of prior output |
+| Region                                             | Default | Explicit annotation                            |
+|----------------------------------------------------|---------|------------------------------------------------|
+| BOS                                                | 0       | Always 0                                       |
+| Input/system opening, header and closing           | 0       | Always 0                                       |
+| Input/system payload                               | 0       | Message weight                                 |
+| Entire output frame, including header and controls | 1       | Message weight                                 |
+| Wait                                               | 1       | Wait's own weight, independent of prior output |
 
 These are unshifted floating-point weights: position `i` supervises prediction
 of token `i`. Fractional values and values above one are supported. The library
@@ -363,15 +367,15 @@ finish reasons belong to framework adapters.
 Library exceptions derive from `ApertusFormatError`, except the
 `RuntimeError` subclass `ParserStateError`.
 
-| Exception | Contract |
-| --- | --- |
-| Pydantic `ValidationError` | Invalid native structure, JSON or header values during construction and loading |
-| `AdapterError` | Unsupported/conflicting mapping or event sequence |
-| `TokenizerError` | Invalid artifact or encoding input |
-| `StreamParseError` | Terminal output framing, header or decoding failure; `reason` is a `ParseFailure` |
-| `ParserStateError` | Parser reused after termination |
-| `ArgumentError` | Invalid argument JSON/object |
-| `ConformanceError` | Requested checks failed or were incomplete |
+| Exception                  | Contract                                                                          |
+|----------------------------|-----------------------------------------------------------------------------------|
+| Pydantic `ValidationError` | Invalid native structure, JSON or header values during construction and loading   |
+| `AdapterError`             | Unsupported/conflicting mapping or event sequence                                 |
+| `TokenizerError`           | Invalid artifact or encoding input                                                |
+| `StreamParseError`         | Terminal output framing, header or decoding failure; `reason` is a `ParseFailure` |
+| `ParserStateError`         | Parser reused after termination                                                   |
+| `ArgumentError`            | Invalid argument JSON/object                                                      |
+| `ConformanceError`         | Requested checks failed or were incomplete                                        |
 
 `make all` covers lint, strict typing, exported-type completeness, all tests
 (including rule invariants), notebook checking/execution and isolated base/HF
