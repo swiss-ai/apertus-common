@@ -12,6 +12,7 @@ from apertus_common.model import (
     Document,
     InputMessage,
     Message,
+    OutputMessage,
     Result,
     UnknownOutput,
     Wait,
@@ -38,12 +39,15 @@ def _message_atoms(message: Message) -> Iterator[WireAtom]:
         if message.id is not None:
             headers["id"] = message.id
     elif isinstance(message, UnknownOutput):
-        headers = message.model_dump(mode="json")["headers"]
+        # Python mode: JSON-mode dumps refuse open messages.
+        headers = message.model_dump()["headers"]
     kind = message.output_type if isinstance(message, UnknownOutput) else message.type
     yield Text(kind + (_json(headers) if headers else ""), "structural", frame_weight)
     yield Control(ControlToken.HDR, frame_weight)
     if message.payload:
         yield Text(message.payload, "payload", payload_weight)
+    if isinstance(message, OutputMessage) and message.open:
+        return
     yield Control(
         ControlToken.IN_END if is_input else ControlToken.OUT_END, frame_weight
     )

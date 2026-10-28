@@ -167,7 +167,21 @@ Parsing does not check conversation history or tool argument schemas.
 `StreamParseError` carries completed output and a recovery boundary;
 `TextStreamParser` and `parse_output_text` support diagnostic text parsing.
 
+For answer prefills and truncated output, an output message can be `open`
+(in memory only): it encodes without its close, and `allow_open=True` keeps an
+unfinished last message instead of failing:
+
+```python
+from apertus_common import Think
+
+prefill = [Think(payload=""), Reply(payload="The answer is", open=True)]
+ids = encoding.encode_items(prefill) + encoding.encode_text(" 4")
+output = encoding.parse_output(ids, allow_open=True)
+assert output.items[-1] == Reply(payload="The answer is 4", open=True)
+```
+
 Details: [parsing and recovery](docs/design.md#output-parsing-and-recovery),
+[open output messages](docs/design.md#open-output-messages),
 [parsing notebook](examples/parsing_examples.ipynb),
 [exact-token harness continuation](examples/harness_roundtrip.py).
 

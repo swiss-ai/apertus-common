@@ -4,6 +4,7 @@ import json
 from unittest.mock import Mock
 
 import pytest
+from pydantic import ValidationError
 from tokenizers import (
     AddedToken,
     Tokenizer,
@@ -587,3 +588,91 @@ def test_unknown_output_storage_tag_never_enters_wire(encoding, name):
     for token in expected:
         parser.push_tokens([token])
     assert parser.finish() == Conversation(items=items)
+
+
+def test_open_items_encode_without_close(encoding):
+    prefill = [Think(payload="t"), Reply(payload="The best", open=True)]
+    expected = [
+        encoding.controls.output_start,
+        *encoding.encode_text("think"),
+        encoding.controls.header_end,
+        *encoding.encode_text("t"),
+        encoding.controls.output_end,
+        encoding.controls.output_start,
+        *encoding.encode_text("reply"),
+        encoding.controls.header_end,
+        *encoding.encode_text("The best"),
+    ]
+    assert encoding.encode_items(prefill) == expected
+    conversation = Conversation(items=[User(payload="q"), *prefill])
+    ids = encoding.encode_conversation(conversation)
+    assert encoding.encode_conversations([conversation]) == [ids]
+    assert encoding.decode_text(ids[1:]) == render_str(conversation)
+    assert ids[-len(expected) :] == expected
+
+
+def test_open_items_have_no_loss_weights(encoding):
+    open_reply = Reply(payload="a", open=True)
+    with pytest.raises(ValidationError, match="only the last item"):
+        encoding.encode_items([open_reply, Wait()])
+    with pytest.raises(ValueError, match="no loss weights"):
+        encoding.encode_items([open_reply], return_loss_weights=True)
+    conversation = Conversation(items=[User(payload="q"), open_reply])
+    with pytest.raises(ValueError, match="no loss weights"):
+        encoding.encode_conversation(conversation, return_loss_weights=True)
+    with pytest.raises(ValueError, match="no loss weights"):
+        encoding.encode_conversations([conversation], return_loss_weights=True)
+
+
+def test_token_parser_allow_open(encoding):
+    prefill = [Think(payload="t"), Reply(payload="The best", open=True)]
+    ids = [*encoding.encode_items(prefill), *encoding.encode_text(" B")]
+    expected = Conversation(
+        items=[Think(payload="t"), Reply(payload="The best B", open=True)]
+    )
+    assert encoding.parse_output(ids, allow_open=True) == expected
+    parser = encoding.output_parser()
+    for token in ids:
+        parser.push_tokens([token])
+    assert parser.finish(allow_open=True) == expected
+    with pytest.raises(StreamParseError) as caught:
+        encoding.parse_output(ids)
+    assert caught.value.reason is ParseFailure.INCOMPLETE_PAYLOAD
+    closed = [*ids, encoding.controls.output_end, encoding.controls.wait]
+    assert encoding.parse_output(closed, allow_open=True) == Conversation(
+        items=[Think(payload="t"), Reply(payload="The best B"), Wait()]
+    )
+
+
+def test_open_payload_drops_a_cut_character(encoding):
+    head = encoding.encode_items([Reply(payload="a", open=True)])
+    rocket = encoding.encode_text("🚀")
+    assert len(rocket) > 1
+    for cut in range(1, len(rocket)):
+        ids = [*head, *rocket[:cut]]
+        assert encoding.parse_output(ids, allow_open=True) == Conversation(
+            items=[Reply(payload="a", open=True)]
+        )
+        with pytest.raises(StreamParseError) as caught:
+            encoding.parse_output(ids)
+        assert caught.value.reason is ParseFailure.INVALID_ENCODING
+
+
+def test_allow_open_tokens_still_require_a_complete_header(encoding):
+    header = [encoding.controls.output_start, *encoding.encode_text("reply")]
+    with pytest.raises(StreamParseError) as caught:
+        encoding.parse_output(header, allow_open=True)
+    assert caught.value.reason is ParseFailure.INCOMPLETE_HEADER
+    cut = [*header, encoding.encode_text("🚀")[0]]
+    with pytest.raises(StreamParseError) as caught:
+        encoding.parse_output(cut, allow_open=True)
+    assert caught.value.reason is ParseFailure.INVALID_ENCODING
+
+
+def test_weighted_batches_accept_one_shot_iterables(encoding):
+    closed = [Conversation(items=[User(payload="q"), Reply(payload="a")])] * 2
+    batch = encoding.encode_conversations(iter(closed), return_loss_weights=True)
+    expected = [
+        encoding.encode_conversation(c, return_loss_weights=True) for c in closed
+    ]
+    assert batch == expected

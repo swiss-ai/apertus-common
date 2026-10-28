@@ -10,7 +10,7 @@ from typing import ClassVar
 from apertus_common.checker._report import Unevaluated, Violation
 from apertus_common.checker.rules._base import Rule
 from apertus_common.checker.rules._view import CheckView, ViewChecker
-from apertus_common.model import Call, Document, Result, UnknownOutput
+from apertus_common.model import Call, Document, OutputMessage, Result, UnknownOutput
 
 
 class ProfileChecker(ViewChecker):
@@ -29,6 +29,7 @@ class ProfileChecker(ViewChecker):
         Rule("profile/unique-tool-name", "declared tool names are unique"),
         Rule("profile/object-schema", "tool schemas declare object-root arguments"),
         Rule("profile/loss-weight", "training loss annotations require opt-in"),
+        Rule("profile/closed-output", "output messages are closed"),
     )
 
     def check_view(self, current: CheckView) -> Iterable[Violation | Unevaluated]:
@@ -41,6 +42,10 @@ class ProfileChecker(ViewChecker):
                         "loss weights require allow_loss_weights=True",
                     )
         for item, location in current.items:
+            if isinstance(item, OutputMessage) and item.open:
+                yield self.violation(
+                    "profile/closed-output", location, "output message is open"
+                )
             if isinstance(item, UnknownOutput):
                 yield self.violation(
                     "profile/known-output",

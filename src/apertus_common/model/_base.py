@@ -27,13 +27,17 @@ from pydantic import (
     Field,
     GetJsonSchemaHandler,
     PlainSerializer,
+    SerializationInfo,
+    SerializerFunctionWrapHandler,
+    StrictBool,
     StrictStr,
     ValidationError,
     ValidationInfo,
     WithJsonSchema,
+    model_serializer,
     model_validator,
 )
-from pydantic.json_schema import JsonSchemaValue
+from pydantic.json_schema import JsonSchemaValue, SkipJsonSchema
 from pydantic_core import CoreSchema
 
 if TYPE_CHECKING:
@@ -444,6 +448,16 @@ class Message(Model, frozen=True):
             raise ValueError("construct a concrete message type")
         return value
 
+    # On the base class so fields typed `Message` are guarded too. No return
+    # annotation: one would replace the serialization schema.
+    @model_serializer(mode="wrap")
+    def _in_memory_only(  # type: ignore[no-untyped-def]
+        self, handler: SerializerFunctionWrapHandler, info: SerializationInfo
+    ):
+        if getattr(self, "open", False) and info.mode_is_json():
+            raise ValueError("open messages have no JSON")
+        return handler(self)
+
 
 class InputMessage(Message, frozen=True):
     @property
@@ -452,9 +466,39 @@ class InputMessage(Message, frozen=True):
 
 
 class OutputMessage(Message, frozen=True):
+    """Model output; ``open=True`` marks an in-memory, unfinished last message.
+
+    Open messages render and encode without ``<|/out|>`` for prefills and come
+    from parsing with ``allow_open=True``. They are never serialized to JSON or
+    mapped, and never conformant (docs/design.md, "Open output messages").
+    """
+
+    open: SkipJsonSchema[StrictBool] = Field(default=False, exclude=True)
+
     @property
     def direction(self) -> Literal["out"]:
         return "out"
+
+    def __repr_args__(self) -> Iterator[tuple[str | None, Any]]:
+        # Closed messages keep their established representation.
+        for name, value in super().__repr_args__():
+            if name != "open" or value:
+                yield name, value
+
+    @model_validator(mode="before")
+    @classmethod
+    def _json_closed(cls, value: Any, info: ValidationInfo) -> Any:
+        from_json = info.mode == "json" or info.context == "native_json"
+        if from_json and isinstance(value, Mapping) and "open" in value:
+            raise ValueError("JSON has no open messages")
+        return cast(Any, value)
+
+    def to_json(self) -> str:
+        if self.open:
+            raise json_validation_error(
+                type(self), self, ValueError("open messages have no native JSON")
+            )
+        return super().to_json()
 
 
 KNOWN_OUTPUT_TYPES = frozenset({"think", "reply", "claim", "call"})

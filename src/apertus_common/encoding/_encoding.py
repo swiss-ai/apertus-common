@@ -15,7 +15,7 @@ from apertus_common.core._render import to_wire
 from apertus_common.core._wire import Control, ControlToken
 from apertus_common.errors import ParseFailure, ParserStateError, TokenizerError
 from apertus_common.model import Conversation
-from apertus_common.model._conversation import ConversationItem
+from apertus_common.model._conversation import ConversationItem, has_open
 from apertus_common.parsing import ParseBoundary
 from apertus_common.parsing._stream import ParserCore
 
@@ -408,7 +408,10 @@ class ApertusEncoding:
         Each result starts with BOS. Callers choose batch sizes to bound memory;
         this method performs no conformance checks, padding or packing.
         """
-        runs = [list(self._wire_runs(conversation)) for conversation in conversations]
+        runs = [
+            self._checked_runs(conversation, return_loss_weights)
+            for conversation in conversations
+        ]
         texts = [
             value
             for sequence in runs
@@ -442,10 +445,17 @@ class ApertusEncoding:
         if text:
             yield "".join(text), weight
 
+    def _checked_runs(
+        self, conversation: Conversation, return_loss_weights: bool
+    ) -> list[_Run]:
+        if return_loss_weights and has_open(conversation.items):
+            raise ValueError("open messages have no loss weights")
+        return list(self._wire_runs(conversation))
+
     def _encode_wire(
         self, conversation: Conversation, bos: bool, return_loss_weights: bool
     ) -> list[int] | EncodingResult:
-        runs = list(self._wire_runs(conversation))
+        runs = self._checked_runs(conversation, return_loss_weights)
         text_ids = (
             self._backend.encode(value, add_special_tokens=False).ids
             for value, _ in runs
@@ -479,10 +489,12 @@ class ApertusEncoding:
     def output_parser(self) -> TokenStreamParser:
         return TokenStreamParser(self)
 
-    def parse_output(self, token_ids: Sequence[int]) -> Conversation:
+    def parse_output(
+        self, token_ids: Sequence[int], *, allow_open: bool = False
+    ) -> Conversation:
         parser = self.output_parser()
         parser.push_tokens(token_ids)
-        return parser.finish()
+        return parser.finish(allow_open=allow_open)
 
     def token_bytes(self, token_id: int) -> bytes:
         """Decode an ordinary ByteLevel vocabulary entry without UTF-8 repair."""
@@ -572,16 +584,19 @@ class TokenStreamParser(ParserCore):
             )
         self._pending_start = self._position
 
-    def finish(self) -> Conversation:
+    def finish(self, *, allow_open: bool = False) -> Conversation:
         if self._failed:
             raise ParserStateError("finish on a failed parser; use a new parser")
         if self._result is not None:
             return self._result
-        if self._decoder.getstate()[0]:
+        # `current` is set only inside a payload, after a complete header; there a
+        # cut inside a character ends the open payload at its last full one.
+        in_open_payload = allow_open and self.current is not None
+        if self._decoder.getstate()[0] and not in_open_payload:
             self.fail(
                 ParseFailure.INVALID_ENCODING, self._position, "incomplete UTF-8 at end"
             )
-        return super().finish()
+        return super().finish(allow_open=allow_open)
 
 
 def load_encoding(artifact: PreTrainedTokenizerFast | str | Path) -> ApertusEncoding:

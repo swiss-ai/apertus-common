@@ -38,6 +38,9 @@ name. All messages expose read-only `.direction` derived from their input/output
 class; direction is not a constructor field or serialized metadata.
 `Wait` is a separate item. Known types reject extra fields.
 
+Output messages also take an in-memory `open` flag, described in
+[open output messages](#open-output-messages).
+
 History retention follows the [profile's memory policy](https://github.com/swiss-ai/apertus-2-format-spec-proposal/blob/4f6f170731cfe79c226f3c777204be5e4cb69203/profile/apertus_2/apertus_2.md#context-and-memory-policy).
 The library preserves supplied messages, including zero-loss thinking; the harness
 owns retention and announced compaction. Partial-history checking cannot detect
@@ -145,7 +148,7 @@ check the selected data explicitly before encoding it.
 
 | Mode           | Checks                                                                                                     |
 |----------------|------------------------------------------------------------------------------------------------------------|
-| `profile`      | Known types, nonnegative counters, document provenance, tool declarations                                  |
+| `profile`      | Known types, closed outputs, nonnegative counters, document provenance, tool declarations                  |
 | `conversation` | Profile checks plus system presence, call/result history, waits, document IDs and advisory claim placement |
 | `full`         | Conversation checks plus argument JSON and declared schemas                                                |
 
@@ -257,6 +260,7 @@ backend and returns one ID list per conversation, including BOS. Results are
 identical to separate scalar calls; an empty batch returns `[]`. The caller
 bounds batches and controls worker processes and tokenizer threading.
 
+
 `encode_conversation`, `encode_items` and `encode_conversations` accept
 `return_loss_weights=True`. Scalar operations then return `EncodingResult`
 with equally long `token_ids` and `loss_weights` lists; batching returns a list
@@ -293,8 +297,8 @@ are `encoding.output_parser()` (`push_tokens`) and `TextStreamParser`
 
 `take_events()` drains ordered `MessageStart(index, type, headers)`,
 `PayloadDelta(index, text)`, `MessageCompleted(index, message)` and
-`WaitReached()` events. Typed messages are
-constructed once, on close. Invalid argument JSON and unknown output types
+`WaitReached()` events. Typed messages are constructed once, on close or at
+`finish(allow_open=True)`. Invalid argument JSON and unknown output types
 survive parsing; malformed framing or headers fail immediately.
 For unknown outputs, start events and `OpenMessage.type` carry the original wire
 name; completed messages store it in `UnknownOutput.output_type`. The harness
@@ -307,7 +311,8 @@ provisional until the message closes successfully.
 `current` exposes an `OpenMessage`; `boundary` is `EMPTY`, `IN_MESSAGE`,
 `MESSAGE_END` or `WAIT`. `consumed` and `last_valid_boundary` use characters for
 text and tokens for encoded streams. `finish()` accepts a clean message boundary
-without requiring wait, rejects incomplete output and returns the same result
+without requiring wait, rejects incomplete output unless `allow_open=True`
+([open output messages](#open-output-messages)), and returns the same result
 on repeated calls. Any data after wait is an error, including within one push.
 A subsequent push after wait or successful finish raises `ParserStateError`;
 after failure, both push and finish do so. Events remain drainable.
@@ -317,6 +322,48 @@ boundary and completed output. Recovery belongs to the caller: discard the
 invalid suffix, retain only the original tokens through that boundary, and use
 a new parser. Never reconstruct continuation tokens by re-encoding decoded
 text. Engine termination reasons are separate from parsing success.
+
+## Open output messages
+
+`open=True` on an output message marks it as unfinished: the last message of a
+sequence, without its `<|/out|>`. It is an in-memory state for two harness
+needs:
+
+- **Prefill.** The harness appends a think (empty or generated) and
+  `Reply(payload=prefix, open=True)`, then encodes or renders the prompt so the
+  model continues the reply.
+- **Truncation.** Output cut off by a token limit parses with
+  `allow_open=True` instead of failing, keeping the partial last message.
+
+Only output messages can be open, and only as the last item of a conversation
+or `encode_items` input, so no `Wait` follows; violations raise
+`ValidationError`. Constructors set the flag (default `False`); builders create
+closed messages. Unrelated: the parser's `OpenMessage` snapshot (`current`)
+describes any message in progress.
+
+| Path | Open messages |
+| --- | --- |
+| `render_str`, `encode_items`, `encode_conversation(s)` | Rendered without the output close |
+| Parsers with `allow_open=True` | Last item when output ends inside a payload |
+| Parsers by default | Incomplete output raises `StreamParseError` |
+| Checking | `profile/closed-output` error in every mode |
+| `to_json`, `from_json`, Pydantic JSON loading | `ValidationError`; the schema omits the flag |
+| Pydantic JSON dumps | `PydanticSerializationError` |
+| Python-mode `model_dump` | Omits the flag, so a reload is closed |
+| Loss weights | `ValueError` |
+| `to_openai`, `to_openai_output`, `OpenAIStreamMapper` | `AdapterError` |
+
+With `allow_open=True`, ending inside a header, or in a control spelling between
+messages, still fails. At the cut, the token parser drops an incomplete UTF-8
+character and the text parser keeps a partial control spelling such as `<|` as
+text. The open item emits no `MessageCompleted` and leaves
+`last_valid_boundary` unchanged.
+
+Parsers start between messages: parse the prefill items (`encode_items` or
+`render_str`) followed by the generated IDs or text; the open payload includes
+the prefix. Before mapping or storing parsed output, close or drop open
+messages explicitly, e.g. `message.model_copy(update={"open": False})` (safe for
+this flag).
 
 ## OpenAI mapping
 
@@ -349,7 +396,8 @@ including host/document/unknown outputs, claim omission, richer system settings
 or unrepresentable assistant ordering. `MappingPolicy` explicitly permits
 merging system messages, merging assistant messages, omitting claims or
 `omit_loss_weights=True`; lossy
-conversions produce diagnostics. There is no assistant-prefill support.
+conversions produce diagnostics. Assistant prefills have no OpenAI mapping;
+they are rendered natively as open messages.
 Native-to-OpenAI mappings reject annotated records unless weight omission is
 explicitly enabled. Native weights supplied through `from_openai(system_defaults=...)`
 are preserved on the constructed system prompt.
@@ -365,17 +413,19 @@ finish reasons belong to framework adapters.
 ## Errors and verification
 
 Library exceptions derive from `ApertusFormatError`, except the
-`RuntimeError` subclass `ParserStateError`.
+`RuntimeError` subclass `ParserStateError` and the `ValueError` for loss
+weights on open messages.
 
 | Exception                  | Contract                                                                          |
 |----------------------------|-----------------------------------------------------------------------------------|
-| Pydantic `ValidationError` | Invalid native structure, JSON or header values during construction and loading   |
+| Pydantic `ValidationError` | Invalid native structure, JSON or header values during construction and loading; `to_json` of an open message |
 | `AdapterError`             | Unsupported/conflicting mapping or event sequence                                 |
 | `TokenizerError`           | Invalid artifact or encoding input                                                |
 | `StreamParseError`         | Terminal output framing, header or decoding failure; `reason` is a `ParseFailure` |
 | `ParserStateError`         | Parser reused after termination                                                   |
 | `ArgumentError`            | Invalid argument JSON/object                                                      |
 | `ConformanceError`         | Requested checks failed or were incomplete                                        |
+| `ValueError`               | Loss weights requested for an open message                                        |
 
 `make all` covers lint, strict typing, exported-type completeness, all tests
 (including rule invariants), notebook checking/execution and isolated base/HF
