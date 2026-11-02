@@ -348,8 +348,7 @@ describes any message in progress.
 | Parsers by default | Incomplete output raises `StreamParseError` |
 | Checking | `profile/closed-output` error in every mode |
 | `to_json`, `from_json`, Pydantic JSON loading | `ValidationError`; the schema omits the flag |
-| Pydantic JSON dumps | `PydanticSerializationError` |
-| Python-mode `model_dump` | Omits the flag, so a reload is closed |
+| Pydantic dumps (JSON and Python modes) | `PydanticSerializationError`; explicitly close or drop open messages first |
 | Loss weights | `ValueError` |
 | `to_openai`, `to_openai_output`, `OpenAIStreamMapper` | `AdapterError` |
 

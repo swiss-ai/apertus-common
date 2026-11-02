@@ -89,19 +89,27 @@ def test_native_json_rejects_open_messages(item):
             Conversation.from_json(json.dumps(document))
 
 
-def test_open_messages_stay_in_memory():
-    item = Reply(payload="a", open=True)
+@pytest.mark.parametrize("item", OPEN_ITEMS)
+def test_open_messages_stay_in_memory(item):
     conversation = Conversation(items=[User(payload="q"), item])
     for dump in [
+        item.model_dump,
+        lambda: item.model_dump(round_trip=True),
+        conversation.model_dump,
+        lambda: json.dumps(conversation.model_dump()),
+        lambda: TypeAdapter(Message).dump_python(item),
         item.model_dump_json,
         lambda: item.model_dump(mode="json"),
         conversation.model_dump_json,
+        lambda: conversation.model_dump(mode="json"),
     ]:
-        with pytest.raises(PydanticSerializationError, match="no JSON"):
+        with pytest.raises(PydanticSerializationError, match="cannot be serialized"):
             dump()
-    assert item.model_dump() == {"type": "reply", "payload": "a"}
-    with pytest.raises(PydanticSerializationError, match="no JSON"):
+    closed = item.model_copy(update={"open": False})
+    assert type(item).from_json(json.dumps(closed.model_dump())) == closed
+    with pytest.raises(PydanticSerializationError, match="cannot be serialized"):
         TypeAdapter(Message).dump_json(item)
+    assert conversation.model_copy(deep=True).items[-1].open
     data = '{"schema_version":2,"items":[{"type":"reply","payload":"x","open":true}]}'
     with pytest.raises(ValidationError, match="no open messages"):
         Conversation.model_validate_json(data)
@@ -122,8 +130,13 @@ def test_open_messages_stay_in_memory():
             '<|out|>call{"name":"f","counter":1}<|hdr|>{',
         ),
         (
-            UnknownOutput(output_type="f", headers={"x": "y"}, payload="z", open=True),
-            '<|out|>f{"x":"y"}<|hdr|>z',
+            UnknownOutput(
+                output_type="f",
+                headers={"x": [{"y": [1, True, None]}]},
+                payload="z",
+                open=True,
+            ),
+            '<|out|>f{"x":[{"y":[1,true,null]}]}<|hdr|>z',
         ),
     ],
 )

@@ -27,7 +27,6 @@ from pydantic import (
     Field,
     GetJsonSchemaHandler,
     PlainSerializer,
-    SerializationInfo,
     SerializerFunctionWrapHandler,
     StrictBool,
     StrictStr,
@@ -452,10 +451,10 @@ class Message(Model, frozen=True):
     # annotation: one would replace the serialization schema.
     @model_serializer(mode="wrap")
     def _in_memory_only(  # type: ignore[no-untyped-def]
-        self, handler: SerializerFunctionWrapHandler, info: SerializationInfo
+        self, handler: SerializerFunctionWrapHandler
     ):
-        if getattr(self, "open", False) and info.mode_is_json():
-            raise ValueError("open messages have no JSON")
+        if getattr(self, "open", False):
+            raise ValueError("open messages cannot be serialized")
         return handler(self)
 
 

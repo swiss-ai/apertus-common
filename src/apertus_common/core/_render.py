@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from collections.abc import Iterator
 
+from pydantic import TypeAdapter
+
 from apertus_common.core._wire import Control, ControlToken, Text, WireAtom
 from apertus_common.model import (
     Call,
@@ -17,6 +19,9 @@ from apertus_common.model import (
     UnknownOutput,
     Wait,
 )
+from apertus_common.model._primitives import HeaderJsonObject
+
+_HEADER_ADAPTER: TypeAdapter[HeaderJsonObject] = TypeAdapter(HeaderJsonObject)
 
 
 def _json(value: object) -> str:
@@ -39,8 +44,7 @@ def _message_atoms(message: Message) -> Iterator[WireAtom]:
         if message.id is not None:
             headers["id"] = message.id
     elif isinstance(message, UnknownOutput):
-        # Python mode: JSON-mode dumps refuse open messages.
-        headers = message.model_dump()["headers"]
+        headers = _HEADER_ADAPTER.dump_python(message.headers, mode="json")
     kind = message.output_type if isinstance(message, UnknownOutput) else message.type
     yield Text(kind + (_json(headers) if headers else ""), "structural", frame_weight)
     yield Control(ControlToken.HDR, frame_weight)
