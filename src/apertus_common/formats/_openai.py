@@ -325,6 +325,8 @@ def to_openai_output(
             raise AdapterError(
                 "item", index, "output fragment contains an input message"
             )
+        if item.open:
+            raise AdapterError("item", index, "open messages have no OpenAI mapping")
         if isinstance(item, UnknownOutput):
             raise AdapterError(
                 "item", index, f"unsupported output type {item.output_type!r}"
@@ -422,6 +424,8 @@ def to_openai(
         last_kind = -1
 
     for index, item in enumerate(conversation.items):
+        if isinstance(item, OutputMessage) and item.open:
+            raise AdapterError("item", index, "open messages have no OpenAI mapping")
         if isinstance(item, Wait):
             if not run:
                 diagnostic = loss_weight_diagnostic(item.loss_weight, policy, index)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Annotated, ClassVar, Literal
 
 from pydantic import (
@@ -17,6 +18,8 @@ from apertus_common.model._base import (
     ImmutableList,
     LossWeight,
     Model,
+    OutputMessage,
+    json_validation_error,
 )
 from apertus_common.model._input import Document, Host, Result, User
 from apertus_common.model._output import Call, Claim, Reply, Think, UnknownOutput
@@ -71,3 +74,24 @@ class Conversation(Model, frozen=True):
         if type(value) is not int:
             raise ValueError("schema_version must be an integer")
         return value
+
+    @field_validator("items")
+    @classmethod
+    def _open_last(
+        cls, items: Sequence[ConversationItem]
+    ) -> Sequence[ConversationItem]:
+        if has_open(items[:-1]):
+            raise ValueError("only the last item may be an open message")
+        return items
+
+    def to_json(self) -> str:
+        if has_open(self.items):
+            raise json_validation_error(
+                type(self), self, ValueError("open messages have no native JSON")
+            )
+        return super().to_json()
+
+
+def has_open(items: Sequence[ConversationItem]) -> bool:
+    """Whether any item is an open output message."""
+    return any(isinstance(item, OutputMessage) and item.open for item in items)

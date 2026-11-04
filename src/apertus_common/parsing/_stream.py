@@ -7,11 +7,12 @@ from typing import Literal, NoReturn
 
 from pydantic import ValidationError
 
-from apertus_common.core._lexeme import Lexeme
+from apertus_common.core._lexeme import Lexeme, SourceSpan, TextLexeme
 from apertus_common.core._machine import (
     ClosedFrame,
     MachineFailure,
     MachineState,
+    OpenFrame,
     OutputMachine,
     PayloadPiece,
     StartedFrame,
@@ -129,12 +130,19 @@ class ParserCore:
         except MachineFailure as error:
             self._raise(error)
 
-    def finish(self) -> Conversation:
+    def finish(self, *, allow_open: bool = False) -> Conversation:
+        """End of input; ``allow_open`` keeps an unfinished last message as open.
+
+        The open message needs a complete header; its payload is the text
+        received so far. It emits no completion event.
+        """
         if self._failed:
             raise ParserStateError("finish on a failed parser; use a new parser")
         if self._result is None:
             try:
-                self._machine.finish()
+                frame = self._machine.finish(allow_open=allow_open)
+                if frame is not None:
+                    self._items.append(self._construct(frame))
             except MachineFailure as error:
                 self._raise(error)
             self._result = Conversation(items=tuple(self._items))
@@ -151,15 +159,19 @@ class ParserCore:
         """Terminate on a frontend decoding/lexing failure."""
         self._raise(self._machine.fail(reason, offset, detail, cause))
 
-    def _construct(self, frame: ClosedFrame) -> ParsedMessage:
+    def _construct(self, frame: ClosedFrame | OpenFrame) -> ParsedMessage:
+        is_open = isinstance(frame, OpenFrame)
         try:
             message_type = _OUTPUT_TYPES.get(frame.type)
             if message_type is None:
                 return UnknownOutput(
-                    output_type=frame.type, headers=frame.headers, payload=frame.payload
+                    output_type=frame.type,
+                    headers=frame.headers,
+                    payload=frame.payload,
+                    open=is_open,
                 )
             return message_type.model_validate(
-                {**frame.headers, "payload": frame.payload}
+                {**frame.headers, "payload": frame.payload, "open": is_open}
             )
         except ValidationError as error:
             raise self._machine.fail(
@@ -200,21 +212,31 @@ class TextStreamParser(ParserCore):
                 "wait ends the output segment",
             )
 
-    def finish(self) -> Conversation:
+    def finish(self, *, allow_open: bool = False) -> Conversation:
         if self._result is not None or self._failed:
-            return super().finish()
+            return super().finish(allow_open=allow_open)
         self.feed(self._lexer.finish())
-        if self._lexer.pending:
-            self.fail(
-                ParseFailure.INCOMPLETE_CONTROL,
-                self._lexer.pending_start,
-                "input ends inside a control spelling",
-            )
-        return super().finish()
+        pending, start = self._lexer.pending, self._lexer.pending_start
+        if pending:
+            # Controls are atomic in decoded text, so a held glyph prefix at the
+            # end of an open payload (`current` is set) is ordinary text.
+            if allow_open and self.current is not None:
+                span = SourceSpan(start, start + len(pending), "character")
+                self.feed([TextLexeme(pending, span)])
+            else:
+                self.fail(
+                    ParseFailure.INCOMPLETE_CONTROL,
+                    start,
+                    "input ends inside a control spelling",
+                )
+        return super().finish(allow_open=allow_open)
 
 
-def parse_output_text(text: str) -> Conversation:
-    """Parse one complete output segment without running conformance checks."""
+def parse_output_text(text: str, *, allow_open: bool = False) -> Conversation:
+    """Parse one output segment without running conformance checks.
+
+    ``allow_open`` keeps an unfinished last message as an open item.
+    """
     parser = TextStreamParser()
     parser.push_text(text)
-    return parser.finish()
+    return parser.finish(allow_open=allow_open)

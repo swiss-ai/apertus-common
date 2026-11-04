@@ -168,6 +168,8 @@ class OpenAIStreamMapper:
                 ]
             return []
         assert isinstance(event, MessageCompleted)
+        if event.message.open:
+            self._fail("open messages have no OpenAI mapping")
         try:
             diagnostic = loss_weight_diagnostic(
                 event.message.loss_weight, self._policy, event.index

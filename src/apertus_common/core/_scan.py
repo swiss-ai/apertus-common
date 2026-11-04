@@ -33,8 +33,8 @@ class TextLexer:
 
     ``push`` accepts arbitrary chunks and returns completed lexemes;
     ``finish`` returns nothing in text mode because any residue is an
-    unterminated glyph prefix, exposed through ``pending`` for the facade
-    to report as an incomplete-control failure.
+    unterminated glyph prefix, exposed through ``pending``. The facade reports
+    it as an incomplete-control failure, or as payload text of an open message.
     """
 
     def __init__(self) -> None:

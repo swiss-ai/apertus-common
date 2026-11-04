@@ -66,6 +66,17 @@ class ClosedFrame:
 
 
 @dataclass(frozen=True, slots=True)
+class OpenFrame:
+    """The unfinished last frame, kept by ``finish(allow_open=True)``."""
+
+    index: int
+    type: str
+    headers: JsonObject
+    payload: str
+    start: int
+
+
+@dataclass(frozen=True, slots=True)
 class WaitFrame:
     end: int
 
@@ -188,18 +199,25 @@ class OutputMachine:
             reason, offset, f"unexpected {token.value} in {self.state.value}"
         )
 
-    def finish(self) -> None:
+    def finish(self, *, allow_open: bool = False) -> OpenFrame | None:
         if self.state is MachineState.HEADER:
             raise self.fail(
                 ParseFailure.INCOMPLETE_HEADER, self.consumed, "header is incomplete"
             )
+        frame = None
         if self.state is MachineState.PAYLOAD:
-            raise self.fail(
-                ParseFailure.INCOMPLETE_PAYLOAD,
-                self.consumed,
-                "output close is missing",
+            if not allow_open:
+                raise self.fail(
+                    ParseFailure.INCOMPLETE_PAYLOAD,
+                    self.consumed,
+                    "output close is missing",
+                )
+            assert self.type is not None
+            frame = OpenFrame(
+                self.index, self.type, self.headers, self.payload, self.start
             )
         self.state = MachineState.FINISHED
+        return frame
 
     def fail(
         self,
