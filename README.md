@@ -230,7 +230,7 @@ multi-turn tool results.
 
 The integration lives in `apertus_common.vllm`, is excluded from the strict
 type checks (vLLM has no macOS wheels) and is tested in a CPU-only vLLM
-container: `tests/vllm/Dockerfile`, then `pytest tests/vllm` with
+container: `tests/vllm_plugin/Dockerfile`, then `pytest tests/vllm` with
 `APERTUS_ENCODING` pointing at an `Apertus_2_instruct` tokenizer directory.
 
 ## Prepare datasets
