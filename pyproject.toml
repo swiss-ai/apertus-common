@@ -13,6 +13,11 @@ dependencies = [
 [project.optional-dependencies]
 hf = ["transformers>=5.16"]
 
+# Loaded by vLLM at start-up; registers the `apertus2` tokenizer mode, renderer,
+# reasoning parser and tool parser (see src/apertus_common/vllm/__init__.py).
+[project.entry-points."vllm.general_plugins"]
+apertus2 = "apertus_common.vllm:register"
+
 [project.urls]
 Repository = "https://github.com/swiss-ai/apertus-common"
 Documentation = "https://github.com/swiss-ai/apertus-common#readme"
@@ -34,6 +39,9 @@ testpaths = ["tests"]
 [tool.mypy]
 strict = true
 files = ["src", "scripts"]
+# The vLLM integration is typed against vLLM, which the dev environment cannot
+# install (Linux-only wheels); it is checked by its tests in a vLLM container.
+exclude = ["src/apertus_common/vllm/"]
 plugins = ["pydantic.mypy"]
 
 [tool.pydantic-mypy]
@@ -42,6 +50,7 @@ init_typed = true
 
 [tool.pyright]
 include = ["src", "scripts"]
+exclude = ["src/apertus_common/vllm"]
 typeCheckingMode = "strict"
 pythonVersion = "3.13"
 

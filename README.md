@@ -19,6 +19,7 @@ same `conversation` and `encoding` objects.
 - [Produce training loss weights](#produce-training-loss-weights)
 - [Parse generated output](#parse-generated-output)
 - [Map OpenAI messages](#map-openai-messages)
+- [Serve with vLLM](#serve-with-vllm)
 - [Prepare datasets](#prepare-datasets)
 - [Documentation and examples](#documentation-and-examples)
 - [Development](#development)
@@ -207,6 +208,30 @@ not an exact round-trip guarantee for arbitrary OpenAI or native records.
 
 Details: [supported mappings and loss policies](docs/design.md#openai-mapping),
 [format comparison, conversion losses and training/inference examples](examples/openai_conversion_examples.ipynb).
+
+## Serve with vLLM
+
+Installing this package next to vLLM (0.28 or newer) registers an `apertus2`
+tokenizer mode and parsers through vLLM's `vllm.general_plugins` entry point,
+so an Apertus 2 checkpoint serves `/v1/chat/completions` with no chat template:
+
+```sh
+vllm serve <checkpoint> --tokenizer-mode apertus2 --reasoning-parser apertus2 \
+    --enable-auto-tool-choice --tool-call-parser apertus2
+```
+
+Chat requests are mapped with `from_openai` (`reasoning_effort` and `tools`
+become the system frame) and encoded to token IDs with the checkpoint's
+tokenizer; generated `think`, `reply` and `call` frames stream back as
+`reasoning`, `content` and `tool_calls`. Other frame kinds (`claim`, unknown)
+pass through as content. `/v1/completions` is unchanged. Not yet applied:
+generation constraints (`forbidden_token_ids`) and the tool-call ID context for
+multi-turn tool results.
+
+The integration lives in `apertus_common.vllm`, is excluded from the strict
+type checks (vLLM has no macOS wheels) and is tested in a CPU-only vLLM
+container: `tests/vllm/Dockerfile`, then `pytest tests/vllm` with
+`APERTUS_ENCODING` pointing at an `Apertus_2_instruct` tokenizer directory.
 
 ## Prepare datasets
 
