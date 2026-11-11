@@ -82,6 +82,31 @@ def test_apply_chat_template_matches_library_encoding(tokenizer) -> None:
     assert "get_weather" in rendered
 
 
+def test_replayed_tool_call_with_parsed_arguments(tokenizer) -> None:
+    # vLLM decodes prior call arguments to a dict before rendering; the encoding
+    # must match the compact JSON string the model emitted and clients replay.
+    call = {"id": "call_1", "type": "function"}
+    reply = {"role": "tool", "tool_call_id": "call_1", "content": "Sunny"}
+
+    def history(arguments):
+        function = {"name": "get_weather", "arguments": arguments}
+        assistant = {
+            "role": "assistant",
+            "tool_calls": [{**call, "function": function}],
+        }
+        return [*MESSAGES, assistant, reply]
+
+    raw = history('{"city":"SF"}')
+    parsed = history({"city": "SF"})
+    ids = tokenizer.apply_chat_template(
+        raw, tools=TOOLS, conversation=parsed, chat_template=None, return_dict=False
+    )
+    expected = load_encoding(Path(ARTIFACT)).encode_conversation(
+        from_openai(raw, tools=TOOLS).value
+    )
+    assert ids == expected
+
+
 def test_plain_text_encoding_is_untouched(tokenizer) -> None:
     # /v1/completions must still see control glyphs in text as special tokens.
     encoding = load_encoding(Path(ARTIFACT))
