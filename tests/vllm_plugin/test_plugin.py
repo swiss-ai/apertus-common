@@ -7,6 +7,7 @@ tokenizer directory.
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 
@@ -44,6 +45,35 @@ TOOLS = [
 @pytest.fixture(scope="module")
 def tokenizer():
     return Apertus2Tokenizer.from_pretrained(Path(ARTIFACT))
+
+
+@pytest.mark.parametrize("arguments", [{"city": "SF"}, {}, "{}", None])
+def test_tool_call_history_accepts_arguments_as_vllm_parses_them(
+    tokenizer, arguments
+) -> None:
+    # vLLM turns a call's JSON arguments into a dict before the tokenizer sees them.
+    messages = [
+        {"role": "user", "content": "Weather in SF?"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "call_0",
+                    "type": "function",
+                    "function": {"name": "get_weather", "arguments": arguments},
+                }
+            ],
+        },
+        {"role": "tool", "tool_call_id": "call_0", "content": "sunny"},
+    ]
+    prompt = tokenizer.apply_chat_template(messages, tools=TOOLS, tokenize=False)
+    expected = (
+        json.dumps(arguments, ensure_ascii=False)
+        if isinstance(arguments, dict)
+        else (arguments or "{}")
+    )
+    assert expected in prompt
 
 
 def test_register_populates_vllm_registries() -> None:

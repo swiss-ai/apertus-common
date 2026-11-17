@@ -10,6 +10,7 @@ operation (``encode``, ``decode``, vocab) is the unchanged HF tokenizer, so
 from __future__ import annotations
 
 import copy
+import json
 import logging
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any
@@ -41,6 +42,19 @@ _HF_MESSAGE_KEYS = {
 }
 
 
+def _arguments_json(arguments: Any) -> str:
+    """A tool call's arguments as the JSON string ``from_openai`` takes.
+
+    vLLM parses the request's JSON string into a dict before the tokenizer sees the
+    conversation, so a call with arguments arrives as a dict (``{}`` for none).
+    """
+    if isinstance(arguments, str):
+        return arguments or "{}"
+    if arguments is None:
+        return "{}"
+    return json.dumps(arguments, ensure_ascii=False)
+
+
 def _clean_messages(messages: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
     """Keep the OpenAI keys apertus-common maps; drop vLLM-only extras."""
     cleaned = []
@@ -56,7 +70,7 @@ def _clean_messages(messages: Sequence[Mapping[str, Any]]) -> list[dict[str, Any
                     "type": "function",
                     "function": {
                         "name": call["function"]["name"],
-                        "arguments": call["function"].get("arguments") or "{}",
+                        "arguments": _arguments_json(call["function"].get("arguments")),
                     },
                 }
                 for call in calls
