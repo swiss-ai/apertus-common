@@ -1,113 +1,73 @@
-"""The message cast: per-class validation for input and output types."""
-
-import math
-from decimal import Decimal
+"""Native message construction separates structural and conformance rules."""
 
 import pytest
 from pydantic import ValidationError
 
 from apertus_common import (
-    Attachment,
-    GenericInput,
-    GenericOutput,
-    Harness,
+    Call,
+    Claim,
+    Document,
+    Host,
     InputMessage,
+    Message,
     OutputMessage,
-    Retrieval,
-    ToolCall,
-    ToolResult,
-    ToolSpec,
+    Reply,
+    Result,
+    Think,
+    UnknownOutput,
+    User,
 )
 
 
-def test_typing_bases_cannot_be_constructed() -> None:
-    with pytest.raises(ValidationError, match="typing base"):
-        InputMessage()
-    with pytest.raises(ValidationError, match="typing base"):
-        OutputMessage()
-
-
-def test_type_literals_are_fixed() -> None:
-    assert Harness(payload="x").type == "harness"
+@pytest.mark.parametrize("cls", [Host, User, Think, Reply, Claim])
+def test_plain_messages_have_only_text_payload(cls):
+    message = cls(payload=" exact \n")
+    assert message.payload == " exact \n"
+    assert Message.from_json(message.to_json()) == message
     with pytest.raises(ValidationError):
-        Harness(type="user", payload="x")  # type: ignore[arg-type]
-
-
-def test_required_fields() -> None:
+        cls(payload=1)
     with pytest.raises(ValidationError):
-        ToolResult(payload="ok")  # type: ignore[call-arg]
-    with pytest.raises(ValidationError):
-        Retrieval(payload="x")  # type: ignore[call-arg]
+        cls(payload="x", extras={})
 
 
-def test_typed_header_fields_follow_grammar() -> None:
-    assert Retrieval(src="internal-docs:7", payload="x").src == "internal-docs:7"
-    ok = Attachment(name="report.pdf", mime="application/pdf", payload="Q2...")
-    assert ok.name == "report.pdf"
-    with pytest.raises(ValidationError):
-        Retrieval(src="two words", payload="x")
-    with pytest.raises(ValidationError):  # reject, never escape
-        Attachment(name="my report.pdf", payload="x")
-
-
-@pytest.mark.parametrize(
-    ("direction", "type_value", "valid"),
-    [
-        ("in", "calendar_invite", True),
-        # "harness" is a known *input* type; as an output it is open
-        # vocabulary (the spec names it as a possible future output type).
-        ("out", "harness", True),
-        ("in", "user", False),
-        ("out", "assistant", False),
-        ("in", "bad type", False),
-    ],
-)
-def test_generic_types(direction: str, type_value: str, valid: bool) -> None:
-    cls = GenericInput if direction == "in" else GenericOutput
-    if valid:
-        assert cls(type=type_value, payload="x").type == type_value
-    else:
+@pytest.mark.parametrize("cls", [Call, Result])
+def test_integer_counter_is_structural_but_sign_and_arguments_are_not(cls):
+    message = cls(name="weather", counter=-1, payload="not JSON")
+    assert message.counter == -1
+    for counter in (True, "1", 1.0):
         with pytest.raises(ValidationError):
-            cls(type=type_value, payload="x")
+            cls(name="weather", counter=counter, payload="")
 
 
-@pytest.mark.parametrize("cls", [ToolCall, ToolSpec])
-@pytest.mark.parametrize("name", ["bad name", "bad\n"])
-def test_tool_name_grammar(cls: type, name: str) -> None:
+@pytest.mark.parametrize("cls", [Message, InputMessage, OutputMessage])
+def test_bases_are_not_constructible(cls):
     with pytest.raises(ValidationError):
-        if cls is ToolCall:
-            ToolCall(id="f:1", name=name, args={})
-        else:
-            ToolSpec(name=name, json_schema={})
+        cls(direction="out", type="reply", payload="")
 
 
-def test_tool_call_args_accept_any_json_value() -> None:
-    call = ToolCall(
-        id="get_weather:4",
-        name="get_weather",
-        args={"city": "Lisbon", "units": ["C"], "detail": {"wind": True}},
+def test_document_optional_provenance_and_unknown_output():
+    assert Document(payload="text").from_ is None
+    unknown = UnknownOutput(
+        output_type="future", headers={"nested": {"flag": True}}, payload="raw"
     )
-    assert call.args == {"city": "Lisbon", "units": ["C"], "detail": {"wind": True}}
-    assert ToolCall(id="f:1", name="f", args=42).args == 42
-    assert ToolCall(id="f:2", name="f", args=None).args is None
-
-
-@pytest.mark.parametrize(
-    "args",
-    [
-        {"nested": [math.nan]},
-        {"nested": [math.inf]},
-        Decimal("1.2"),
-        b"x",
-        {"nested": b"x"},
-        {b"key": "value"},
-    ],
-)
-def test_tool_call_args_rejected(args: object) -> None:
+    assert Message.from_json(unknown.to_json()) == unknown
     with pytest.raises(ValidationError):
-        ToolCall(id="f:1", name="f", args=args)
+        UnknownOutput(output_type="call", payload="")
 
 
-def test_tool_call_args_reject_json_number_overflow() -> None:
-    with pytest.raises(ValidationError):
-        ToolCall.model_validate_json('{"id":"f:1","name":"f","args":1e999}')
+def test_call_authoring_and_builders():
+    call = Call.build(name="weather", counter=0, arguments={"city": "Zürich"})
+    assert call.payload == '{"city":"Zürich"}'
+    assert (
+        call
+        == Call.builder()
+        .name("weather")
+        .counter(0)
+        .arguments({"city": "Zürich"})
+        .build()
+    )
+    assert User.builder().payload("hi").build() == User(payload="hi")
+    with pytest.raises(ValueError, match="exactly one"):
+        Call.build(name="weather", counter=0, payload="{}", arguments={})
+    with pytest.raises(ValueError, match="exactly one"):
+        Call.builder().name("weather").counter(0).payload("{}").arguments({}).build()

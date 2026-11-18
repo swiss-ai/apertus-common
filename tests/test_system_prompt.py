@@ -1,30 +1,30 @@
-"""SystemPrompt: required effort, tool specs, extra tags."""
+"""Authoring defaults never leak into native system loading."""
 
 import pytest
 from pydantic import ValidationError
 
-from apertus_common import Effort, SystemPrompt, ToolSpec
+from apertus_common import SystemPrompt, Thinking, ToolSpec
 
 
-def test_effort_field() -> None:
-    assert [e.value for e in Effort] == ["low", "medium", "high"]
-    assert SystemPrompt(effort="low").effort is Effort.LOW
+def test_thinking_required_directly_but_authoring_defaults_medium():
     with pytest.raises(ValidationError):
-        SystemPrompt()  # type: ignore[call-arg]
+        SystemPrompt()
     with pytest.raises(ValidationError):
-        SystemPrompt(effort="extreme")
-    with pytest.raises(ValidationError):
-        SystemPrompt(effort=b"low")  # type: ignore[arg-type]
+        SystemPrompt.from_json("{}")
+    assert SystemPrompt.build().thinking is Thinking.MEDIUM
+    assert SystemPrompt.builder().build().thinking is Thinking.MEDIUM
+    assert SystemPrompt(thinking="high").thinking is Thinking.HIGH
+    for value in (1, True, "max"):
+        with pytest.raises(ValidationError):
+            SystemPrompt(thinking=value)
 
 
-def test_tool_schema_requires_json_object() -> None:
+def test_tool_declaration_requires_description_and_preserves_schema():
+    tool = ToolSpec(
+        name="tool", description="Description", json_schema={"type": "object"}
+    )
+    assert '"schema":' in tool.to_json()
+    assert ToolSpec.from_json(tool.to_json()) == tool
+    assert SystemPrompt.builder().tool(tool).build().tools == [tool]
     with pytest.raises(ValidationError):
-        ToolSpec(name="tool", json_schema={"value": {"not", "json"}})
-    with pytest.raises(ValidationError):
-        ToolSpec(name="tool", json_schema="not an object")  # type: ignore[arg-type]
-
-
-@pytest.mark.parametrize("tag", ["identity", "1bad", "bad\n"])
-def test_bad_extra_tags_rejected(tag: str) -> None:
-    with pytest.raises(ValidationError):
-        SystemPrompt(effort="low", extra_tags={tag: "x"})
+        ToolSpec(name="tool", json_schema={})

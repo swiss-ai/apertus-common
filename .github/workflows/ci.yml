@@ -33,7 +33,9 @@ jobs:
         run: make lint
       - name: Types
         run: make typecheck
-      - name: Repo invariants
-        run: make check-repo
+      - name: Examples
+        run: make examples
       - name: Tests
         run: make test
+      - name: Built distribution
+        run: make check-dist

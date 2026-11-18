@@ -1,25 +1,20 @@
-"""Foundational validation and metadata shared by the model package.
-
-This module owns immutable sequence/mapping storage, strict Unicode and header
-types, the :class:`TypeInfo` registry, and the input/output message base
-classes. ``_primitives`` builds reusable field types on these foundations;
-``_input`` and ``_output`` define the concrete cast; and ``_conversation`` uses
-the registry for discrimination and canonical ordering. Order and authority
-are class metadata, never serialized fields.
-"""
+"""Immutable model foundations and strict native JSON loading."""
 
 from __future__ import annotations
 
+import json
+import math
 import re
 from collections.abc import Iterable, Iterator, Mapping, Sequence
-from dataclasses import dataclass
 from types import MappingProxyType
 from typing import (
+    TYPE_CHECKING,
     Annotated,
     Any,
     ClassVar,
     Literal,
     Never,
+    Self,
     TypeVar,
     cast,
     overload,
@@ -28,31 +23,39 @@ from typing import (
 from pydantic import (
     AfterValidator,
     BaseModel,
-    ConfigDict,
+    BeforeValidator,
     Field,
     GetJsonSchemaHandler,
     PlainSerializer,
+    SerializerFunctionWrapHandler,
+    StrictBool,
     StrictStr,
+    ValidationError,
+    ValidationInfo,
     WithJsonSchema,
-    field_validator,
+    model_serializer,
     model_validator,
 )
-from pydantic.json_schema import JsonSchemaValue
+from pydantic.json_schema import JsonSchemaValue, SkipJsonSchema
+from pydantic_core import CoreSchema
 
-from apertus_common.errors import HeaderError
-
-Direction = Literal["in", "out"]
-
-HEADER_KEY_RE = re.compile(r"^[A-Za-z0-9_]+$")
-HEADER_KEY_JSON_PATTERN = r"^(?!.*\s)[A-Za-z0-9_]+$"
-HEADER_VALUE_JSON_PATTERN = (
-    r"^(?!.*[\uD800-\uDFFF])(?!.*\s)(?!.*=)(?!.*<\|)(?!.*\|>)[\s\S]+$"
-)
-UNICODE_SCALAR_JSON_PATTERN = r"^(?!.*[\uD800-\uDFFF])[\s\S]*$"
+if TYPE_CHECKING:
+    from apertus_common.checker import (
+        CheckContext,
+        Checker,
+        CheckMode,
+        CheckOptions,
+        ConformanceReport,
+    )
+    from apertus_common.checker.rules._base import CheckValue
+    from apertus_common.model._builders import ModelBuilder
 
 _T = TypeVar("_T")
 _K = TypeVar("_K")
 _V = TypeVar("_V")
+UNICODE_SCALAR_JSON_PATTERN = r"^[^\uD800-\uDFFF]*$"
+HEADER_VALUE_JSON_PATTERN = r"^[^\s\uD800-\uDFFF]*(?![\s\S])"
+MESSAGE_TYPE_JSON_PATTERN = r"^[A-Za-z0-9_-]+(?![\s\S])"
 
 
 def _immutable() -> Never:
@@ -76,6 +79,9 @@ class FrozenList(Sequence[_T]):
         object.__setattr__(self, "_FrozenList__items", tuple(values))
 
     def __setattr__(self, name: str, value: object) -> Never:
+        _immutable()
+
+    def __delattr__(self, name: str) -> Never:
         _immutable()
 
     @overload
@@ -127,6 +133,9 @@ class FrozenDict(Mapping[_K, _V]):
         object.__setattr__(self, "_FrozenDict__items", MappingProxyType(dict(values)))
 
     def __setattr__(self, name: str, value: object) -> Never:
+        _immutable()
+
+    def __delattr__(self, name: str) -> Never:
         _immutable()
 
     def __getitem__(self, key: _K) -> _V:
@@ -203,215 +212,292 @@ def check_unicode_scalar(value: str) -> str:
 
 
 def check_header_value(value: str) -> str:
-    """Validate and return a value safe for the current header grammar.
+    if any(character.isspace() for character in value):
+        raise ValueError("decoded header strings must not contain whitespace")
+    return check_unicode_scalar(value)
 
-    Values must be non-empty and contain no whitespace, ``=``, or control-glyph
-    fragments (``<|`` and ``|>``). Unsafe values are rejected rather than
-    escaped while the format specification's escaping decision remains open.
-    """
+
+UnicodeScalarString = Annotated[
+    StrictStr,
+    AfterValidator(check_unicode_scalar),
+    WithJsonSchema({"type": "string", "pattern": UNICODE_SCALAR_JSON_PATTERN}),
+]
+HeaderValue = Annotated[
+    UnicodeScalarString,
+    AfterValidator(check_header_value),
+    WithJsonSchema({"type": "string", "pattern": HEADER_VALUE_JSON_PATTERN}),
+]
+
+
+def check_nonempty(value: str) -> str:
     if not value:
-        raise HeaderError("header value must be non-empty")
-    if any(ch.isspace() for ch in value):
-        raise HeaderError(f"header value {value!r} contains whitespace")
-    if "=" in value:
-        raise HeaderError(f"header value {value!r} contains '='")
-    if "<|" in value or "|>" in value:
-        raise HeaderError(f"header value {value!r} contains a control-glyph sequence")
+        raise ValueError("header value must not be empty")
     return value
 
 
-HeaderKey = Annotated[
-    StrictStr,
-    WithJsonSchema({"type": "string", "pattern": HEADER_KEY_JSON_PATTERN}),
-]
-UnicodeScalarString = Annotated[
-    StrictStr,
-    WithJsonSchema({"type": "string", "pattern": UNICODE_SCALAR_JSON_PATTERN}),
-    AfterValidator(check_unicode_scalar),
-]
-HeaderValue = Annotated[
-    StrictStr,
+NonEmptyHeaderValue = Annotated[
+    HeaderValue,
+    AfterValidator(check_nonempty),
     WithJsonSchema(
         {"type": "string", "minLength": 1, "pattern": HEADER_VALUE_JSON_PATTERN}
     ),
-    AfterValidator(check_unicode_scalar),
-    AfterValidator(check_header_value),
 ]
 
 
-@dataclass(frozen=True, slots=True)
-class TypeInfo:
-    """Order and authority labels for one message type.
-
-    ``order``: canonical delivery position at a boundary (1 harness …
-    5 user). ``authority``: trust rank (1 system prompt, 2 harness,
-    3 user, 4 data floor). ``None`` where the spec assigns none
-    (output types; the pretraining ``document``).
-    """
-
-    type: str
-    direction: Direction
-    order: int | None
-    authority: int | None
+def check_type(value: str) -> str:
+    if re.fullmatch(r"[A-Za-z0-9_-]+", value) is None:
+        raise ValueError(
+            "message type must be a nonempty word containing letters, digits, underscore or hyphen"
+        )
+    return value
 
 
-_TYPE_INFOS = (
-    TypeInfo("harness", "in", 1, 2),
-    TypeInfo("tool_result", "in", 2, 4),
-    TypeInfo("retrieval", "in", 3, 4),
-    TypeInfo("event", "in", 3, 4),
-    TypeInfo("attachment", "in", 4, 4),
-    TypeInfo("user", "in", 5, 3),
-    TypeInfo("document", "in", None, 4),
-    TypeInfo("assistant", "out", None, None),
-    TypeInfo("think", "out", None, None),
-    TypeInfo("tool_call", "out", None, None),
-    TypeInfo("verifiable_answer", "out", None, None),
-)
-_REGISTRY: dict[tuple[str, str], TypeInfo] = {
-    (info.direction, info.type): info for info in _TYPE_INFOS
-}
-KNOWN_INPUT_TYPES = frozenset(
-    info.type for info in _TYPE_INFOS if info.direction == "in"
-)
-KNOWN_OUTPUT_TYPES = frozenset(
-    info.type for info in _TYPE_INFOS if info.direction == "out"
-)
+MessageType = Annotated[
+    UnicodeScalarString,
+    AfterValidator(check_type),
+    WithJsonSchema({"type": "string", "pattern": MESSAGE_TYPE_JSON_PATTERN}),
+]
 
 
-def type_info(direction: Direction, type: str) -> TypeInfo:
-    """Return order and authority metadata for a message type.
-
-    Registered built-in types use the format table. An unregistered input type
-    receives the open-vocabulary defaults (order 3, authority 4); unregistered
-    outputs have neither label. ``Conversation.normalized()`` uses this
-    function as its single ordering source.
-    """
-    if direction not in ("in", "out"):
-        raise ValueError(f"invalid message direction: {direction!r}")
-    info = _REGISTRY.get((direction, type))
-    if info is not None:
-        return info
-    if direction == "in":
-        return TypeInfo(type=type, direction="in", order=3, authority=4)
-    return TypeInfo(type=type, direction="out", order=None, authority=None)
+def _loss_weight(value: object) -> object:
+    if value is not None and type(value) not in (int, float):
+        raise ValueError("loss_weight must be a finite non-negative number or None")
+    return value
 
 
-def is_registered(direction: str, type: str) -> bool:
-    """True if (*direction*, *type*) names a dedicated message class.
+LossWeight = Annotated[
+    Annotated[float, Field(ge=0, allow_inf_nan=False)] | None,
+    BeforeValidator(_loss_weight),
+    Field(default=None, exclude_if=lambda value: value is None),
+]
 
-    Package-internal helper for sibling modules; not part of the public API.
-    """
-    return (direction, type) in _REGISTRY
 
+def strict_json_loads(data: str | bytes) -> Any:
+    """Decode strict JSON, rejecting duplicate keys and non-finite numbers."""
 
-class _MessageBase(BaseModel):
-    """Internal Pydantic base for the common message header shape.
+    def pairs(items: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, value in items:
+            if key in result:
+                raise ValueError(f"duplicate JSON key: {key!r}")
+            result[key] = value
+        return result
 
-    It freezes instances, rejects undeclared model fields, validates arbitrary
-    ``extras`` against the open header grammar, and keeps typed header names out
-    of ``extras``. :class:`InputMessage` and
-    :class:`OutputMessage` add the serialized direction; concrete cast classes
-    add ``type``, payload, and typed headers.
-    """
+    def constant(value: str) -> Never:
+        raise ValueError(f"non-finite JSON number: {value}")
 
-    model_config: ClassVar[ConfigDict] = ConfigDict(
-        extra="forbid",
-        allow_inf_nan=False,
-        frozen=True,
-        validate_default=True,
-        revalidate_instances="always",
+    def number(value: str) -> float:
+        result = float(value)
+        if not math.isfinite(result):
+            raise ValueError("non-finite JSON number")
+        return result
+
+    return json.loads(
+        data, object_pairs_hook=pairs, parse_constant=constant, parse_float=number
     )
 
-    order: ClassVar[int | None] = None
-    authority: ClassVar[int | None] = None
-    header_keys: ClassVar[frozenset[str]] = frozenset()
 
-    extras: ImmutableDict[HeaderKey, HeaderValue] = Field(default_factory=dict)
+def json_validation_error(
+    cls: type[BaseModel], value: object, error: ValueError
+) -> ValidationError:
+    return ValidationError.from_exception_data(
+        cls.__name__,
+        [{"type": "value_error", "loc": (), "input": value, "ctx": {"error": error}}],
+    )
+
+
+class Model(
+    BaseModel,
+    frozen=True,
+    extra="forbid",
+    allow_inf_nan=False,
+    validate_default=True,
+    revalidate_instances="never",
+    populate_by_name=True,
+):
+    """Frozen native data with explicit optional conformance checking."""
+
+    _default_check_mode: ClassVar[CheckMode] = "profile"
+
+    @model_validator(mode="before")
+    @classmethod
+    def _native_aliases(cls, value: Any, info: ValidationInfo) -> Any:
+        # Alias flags alone do not reach models inside Pydantic Sequence validators.
+        if info.context == "native_json" and isinstance(value, Mapping):
+            for name, field in cls.model_fields.items():
+                alias = field.validation_alias
+                if isinstance(alias, str) and alias != name and name in value:
+                    raise ValueError(f"native JSON uses {alias!r}, not {name!r}")
+        return cast(Any, value)
 
     @classmethod
     def __get_pydantic_json_schema__(
-        cls, core_schema: object, handler: GetJsonSchemaHandler
+        cls, core_schema: CoreSchema, handler: GetJsonSchemaHandler
     ) -> JsonSchemaValue:
-        """Force defaulted discriminators into ``required`` and expose the
-        reserved-header exclusions that validators enforce at runtime."""
-        schema = cast(dict[str, object], handler(cast(Any, core_schema)))
-        properties_value = schema.get("properties")
-        if isinstance(properties_value, dict):
-            properties = cast(dict[str, object], properties_value)
-            required_value = schema.setdefault("required", [])
-            if isinstance(required_value, list):
-                required = cast(list[object], required_value)
-                for discriminator in ("direction", "type"):
-                    if discriminator in properties and discriminator not in required:
-                        required.append(discriminator)
-            extras_schema_value = properties.get("extras")
-        else:
-            extras_schema_value = None
-        if isinstance(extras_schema_value, dict):
-            extras_schema = cast(dict[str, object], extras_schema_value)
-            property_names_value = extras_schema.setdefault("propertyNames", {})
-            if isinstance(property_names_value, dict):
-                property_names = cast(dict[str, object], property_names_value)
-                property_names["type"] = "string"
-                property_names["pattern"] = HEADER_KEY_JSON_PATTERN
-                property_names["not"] = {
-                    "enum": sorted({"type", "direction", *cls.header_keys})
-                }
-        return cast(JsonSchemaValue, schema)
+        schema = handler(core_schema)
+        properties = schema.get("properties", {})
+        required = schema.setdefault("required", [])
+        for field in ("type", "schema_version"):
+            if field in properties and field not in required:
+                required.append(field)
+        return schema
 
-    @field_validator("extras")
     @classmethod
-    def _check_extras(cls, extras: Mapping[str, str]) -> Mapping[str, str]:
-        # Values are validated by the HeaderValue annotation; only key
-        # grammar and reserved-key collisions are checked here.
-        for key in extras:
-            if HEADER_KEY_RE.fullmatch(key) is None:
-                raise HeaderError(
-                    f"header key {key!r} violates the key grammar [A-Za-z0-9_]+"
+    def from_json(
+        cls, data: str | bytes, *, check: CheckMode | CheckOptions | None = None
+    ) -> Self:
+        try:
+            value = strict_json_loads(data)
+            _require_discriminators(cls, value)
+        except (ValueError, UnicodeError) as error:
+            raise json_validation_error(cls, data, error) from error
+        if cls in (Message, InputMessage, OutputMessage):
+            from apertus_common.model._conversation import MESSAGE_ADAPTER
+
+            dispatched = MESSAGE_ADAPTER.validate_python(
+                value, by_alias=True, by_name=False, context="native_json"
+            )
+            if (cls is InputMessage and dispatched.direction != "in") or (
+                cls is OutputMessage and dispatched.direction != "out"
+            ):
+                raise json_validation_error(
+                    cls, value, ValueError("incorrect message direction")
                 )
-            if key in ("type", "direction") or key in cls.header_keys:
-                raise HeaderError(
-                    f"header key {key!r} duplicates a typed field of {cls.__name__}"
-                )
-        return extras
+            return apply_model_check(cast(Self, dispatched), check)
+        return apply_model_check(
+            cls.model_validate(
+                value, by_alias=True, by_name=False, context="native_json"
+            ),
+            check,
+        )
+
+    def to_json(self) -> str:
+        return self.model_dump_json(by_alias=True)
+
+    def check(
+        self,
+        mode: CheckMode | None = None,
+        *,
+        checkers: Sequence[Checker] | None = None,
+        context: CheckContext | None = None,
+    ) -> ConformanceReport:
+        from apertus_common.checker import check_value
+
+        return check_value(
+            cast("CheckValue", self),
+            mode or self._default_check_mode,
+            checkers=checkers,
+            context=context,
+        )
+
+    @classmethod
+    def builder(cls) -> ModelBuilder[Self]:
+        from apertus_common.model._builders import ModelBuilder
+
+        return ModelBuilder(cls)
 
 
-class InputMessage(_MessageBase):
-    """Base for world-to-model messages framed as ``<|in|> … <|/in|>``.
+def apply_model_check[T: Model](value: T, option: CheckMode | CheckOptions | None) -> T:
+    if option is not None:
+        from apertus_common.checker import apply_check
 
-    Concrete input classes add a fixed or deployment-defined ``type`` plus
-    their payload and headers. Use those concrete classes for
-    construction; this base is primarily useful for shared typing.
-    """
+        apply_check(cast("CheckValue", value), option)
+    return value
 
-    direction: Literal["in"] = "in"
+
+def _require_discriminators(cls: type[Model], value: object) -> None:
+    if not isinstance(value, dict):
+        return
+    data = cast(dict[str, object], value)
+    if "schema_version" in cls.model_fields:
+        if "schema_version" not in data:
+            raise ValueError("conversation JSON requires schema_version")
+        items = data.get("items", [])
+        if isinstance(items, list):
+            for item in cast(list[object], items):
+                _require_message_discriminators(item)
+    elif "type" in cls.model_fields:
+        _require_message_discriminators(data)
+
+
+def _require_message_discriminators(value: object) -> None:
+    if not isinstance(value, dict):
+        return
+    data = cast(dict[str, object], value)
+    if "type" not in data:
+        raise ValueError("native messages require a type discriminator")
+
+
+class Message(Model, frozen=True):
+    """Common base for native messages; construct a concrete message type."""
+
+    type: MessageType
+    payload: UnicodeScalarString
+    loss_weight: LossWeight = None
+
+    @property
+    def direction(self) -> Literal["in", "out"]:
+        """Envelope direction, supplied by the concrete input/output class."""
+        raise NotImplementedError("construct a concrete message type")
 
     @model_validator(mode="before")
     @classmethod
-    def _reject_direct_construction(cls, value: Any) -> Any:
-        if cls is InputMessage:
-            raise ValueError(
-                "InputMessage is a typing base; use a concrete input class"
-            )
+    def _concrete(cls, value: Any) -> Any:
+        if cls in (Message, InputMessage, OutputMessage):
+            raise ValueError("construct a concrete message type")
         return value
 
+    # On the base class so fields typed `Message` are guarded too. No return
+    # annotation: one would replace the serialization schema.
+    @model_serializer(mode="wrap")
+    def _in_memory_only(  # type: ignore[no-untyped-def]
+        self, handler: SerializerFunctionWrapHandler
+    ):
+        if getattr(self, "open", False):
+            raise ValueError("open messages cannot be serialized")
+        return handler(self)
 
-class OutputMessage(_MessageBase):
-    """Base for model-to-world messages framed as ``<|out|> … <|/out|>``.
 
-    Concrete output classes add a fixed or deployment-defined routing ``type``
-    plus their payload and headers. Use those concrete classes
-    for construction; this base is primarily useful for shared typing.
+class InputMessage(Message, frozen=True):
+    @property
+    def direction(self) -> Literal["in"]:
+        return "in"
+
+
+class OutputMessage(Message, frozen=True):
+    """Model output; ``open=True`` marks an in-memory, unfinished last message.
+
+    Open messages render and encode without ``<|/out|>`` for prefills and come
+    from parsing with ``allow_open=True``. They are never serialized to JSON or
+    mapped, and never conformant (docs/design.md, "Open output messages").
     """
 
-    direction: Literal["out"] = "out"
+    open: SkipJsonSchema[StrictBool] = Field(default=False, exclude=True)
+
+    @property
+    def direction(self) -> Literal["out"]:
+        return "out"
+
+    def __repr_args__(self) -> Iterator[tuple[str | None, Any]]:
+        # Closed messages keep their established representation.
+        for name, value in super().__repr_args__():
+            if name != "open" or value:
+                yield name, value
 
     @model_validator(mode="before")
     @classmethod
-    def _reject_direct_construction(cls, value: Any) -> Any:
-        if cls is OutputMessage:
-            raise ValueError(
-                "OutputMessage is a typing base; use a concrete output class"
+    def _json_closed(cls, value: Any, info: ValidationInfo) -> Any:
+        from_json = info.mode == "json" or info.context == "native_json"
+        if from_json and isinstance(value, Mapping) and "open" in value:
+            raise ValueError("JSON has no open messages")
+        return cast(Any, value)
+
+    def to_json(self) -> str:
+        if self.open:
+            raise json_validation_error(
+                type(self), self, ValueError("open messages have no native JSON")
             )
-        return value
+        return super().to_json()
+
+
+KNOWN_OUTPUT_TYPES = frozenset({"think", "reply", "claim", "call"})

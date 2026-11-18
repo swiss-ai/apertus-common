@@ -1,46 +1,62 @@
-"""Conformance checking of conversations against the format spec.
+"""Optional conformance checking; model methods are the canonical entry point."""
 
-``check()`` runs a strict default set of rule-family checkers over a
-typed ``Conversation`` and reports violations instead of raising.
-Extend by subclassing ``Checker`` and passing instances.
-"""
-
-from apertus_common.checker._check import check, default_checkers, rule_table
+from apertus_common.checker._arguments import check_arguments, parse_arguments
+from apertus_common.checker._check import (
+    apply_check as apply_check,
+)
+from apertus_common.checker._check import (
+    check_value as check_value,
+)
+from apertus_common.checker._check import (
+    checkers_for,
+    rule_table,
+)
+from apertus_common.checker._context import (
+    CallState,
+    CheckContext,
+    CheckMode,
+    CheckOptions,
+    HistoryCheckpoint,
+    HostClosure,
+)
 from apertus_common.checker._report import (
     ConformanceError,
     ConformanceReport,
     Location,
     Severity,
+    Unevaluated,
     Violation,
 )
 from apertus_common.checker.rules import (
+    ArgumentsChecker,
     Checker,
-    IdConventionChecker,
-    InputOrderChecker,
+    ConversationChecker,
+    ProfileChecker,
     Rule,
-    SystemPromptChecker,
-    ToolCallChecker,
-    ToolResultChecker,
-    VerifiableAnswerChecker,
-    WaitChecker,
+    TrainingChecker,
 )
 
 __all__ = [
+    "ArgumentsChecker",
+    "CallState",
+    "CheckContext",
+    "CheckMode",
+    "CheckOptions",
     "Checker",
     "ConformanceError",
     "ConformanceReport",
-    "IdConventionChecker",
-    "InputOrderChecker",
+    "ConversationChecker",
+    "HistoryCheckpoint",
+    "HostClosure",
     "Location",
+    "ProfileChecker",
     "Rule",
     "Severity",
-    "SystemPromptChecker",
-    "ToolCallChecker",
-    "ToolResultChecker",
-    "VerifiableAnswerChecker",
+    "TrainingChecker",
+    "Unevaluated",
     "Violation",
-    "WaitChecker",
-    "check",
-    "default_checkers",
+    "check_arguments",
+    "checkers_for",
+    "parse_arguments",
     "rule_table",
 ]

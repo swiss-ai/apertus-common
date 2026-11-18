@@ -1,43 +1,71 @@
-"""Header grammar: open vocabulary keys/values, collisions, error types."""
+"""Decoded header strings cannot contain whitespace; JSON escaping is supported."""
+
+import json
 
 import pytest
 from pydantic import ValidationError
 
-from apertus_common import ApertusFormatError, Harness, HeaderError, ToolResult
-
-
-def test_valid_extras() -> None:
-    message = Harness(payload="x", extras={"lang": "en", "V2": "yes_1"})
-    assert message.extras == {"lang": "en", "V2": "yes_1"}
-
-
-@pytest.mark.parametrize("key", ["a b", "", "k=v", "käse", "a|b", "a-b", "trailing\n"])
-def test_bad_keys_rejected(key: str) -> None:
-    with pytest.raises(ValidationError):
-        Harness(payload="x", extras={key: "v"})
-
-
-@pytest.mark.parametrize(
-    "value",
-    ["", "a b", "a=b", "a\tb", "a\nb", "<|hdr|>", "x|>y", "a<|b", "\ud800"],
+from apertus_common import (
+    Call,
+    Document,
+    ParseFailure,
+    Result,
+    StreamParseError,
+    TextStreamParser,
+    ToolSpec,
+    UnknownOutput,
+    parse_output_text,
 )
-def test_bad_values_rejected(value: str) -> None:
+
+
+@pytest.mark.parametrize("value", ["a b", "a\tb", "a\nb", "a\u2003b", "\ud800"])
+def test_headers_reject_invalid_decoded_strings(value):
     with pytest.raises(ValidationError):
-        Harness(payload="x", extras={"k": value})
-
-
-def test_extras_key_collisions() -> None:
+        Call(name=value, counter=0, payload="")
     with pytest.raises(ValidationError):
-        ToolResult(id="bash:1", payload="ok", extras={"id": "bash:2"})
-    for key in ("type", "direction"):
-        with pytest.raises(ValidationError):
-            Harness(payload="x", extras={key: "user"})
-
-
-def test_error_hierarchy() -> None:
-    assert issubclass(HeaderError, ApertusFormatError)
-    assert issubclass(HeaderError, ValueError)
-    assert issubclass(ApertusFormatError, Exception)
-    # header violations surface through pydantic's ValidationError
+        Document(payload="", from_=value)
     with pytest.raises(ValidationError):
-        Harness(payload="x", extras={"bad key": "v"})
+        UnknownOutput(output_type="future", headers={"nested": [value]}, payload="")
+
+
+@pytest.mark.parametrize("value", ['a"b', "a=b", "a/b", "a\\b"])
+def test_header_strings_allow_json_escapable_nonwhitespace(value):
+    assert Call(name=value, counter=0, payload="").name == value
+
+
+@pytest.mark.parametrize("value", ["", "bad type", "type{", "type<|out|>"])
+def test_unknown_type_word_grammar(value):
+    with pytest.raises(ValidationError):
+        UnknownOutput(output_type=value, payload="")
+
+
+@pytest.mark.parametrize("field", ["from", "id"])
+def test_document_provenance_values_are_nonempty_when_present(field):
+    values = {"from": "user", "id": "a1", field: ""}
+    with pytest.raises(ValidationError):
+        Document(payload="", from_=values["from"], id=values["id"])
+    record = {"type": "document", "payload": "", **values}
+    with pytest.raises(ValidationError):
+        Document.from_json(json.dumps(record))
+
+
+def test_tool_call_and_result_names_are_nonempty():
+    with pytest.raises(ValidationError):
+        ToolSpec(name="", description="", json_schema={"type": "object"})
+    with pytest.raises(ValidationError):
+        Call(name="", counter=0, payload="{}")
+    with pytest.raises(ValidationError):
+        Result(name="", counter=0, payload="")
+    with pytest.raises(StreamParseError) as caught:
+        parse_output_text('<|out|>call{"name":"","counter":0}<|hdr|>{}<|/out|>')
+    assert caught.value.reason is ParseFailure.INVALID_HEADER
+
+
+def test_empty_call_name_fails_before_emitting_provisional_events():
+    parser = TextStreamParser()
+    parser.push_text('<|out|>call{"name":"","counter":0}')
+    with pytest.raises(StreamParseError) as caught:
+        parser.push_text("<|hdr|>")
+    assert caught.value.reason is ParseFailure.INVALID_HEADER
+    assert parser.current is None
+    assert parser.take_events() == []

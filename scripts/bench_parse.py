@@ -1,90 +1,82 @@
-"""Measure parsing throughput to record implementation baselines.
+"""Report parse throughput and peak memory, with no hardware-specific gate.
 
-Builds a synthetic rendered output-only transcript, then reports scanning
-throughput for the text lexer alone and end-to-end throughput for
-``StreamParser.parse``. Baselines feed a future regression budget; the
-script sets no budget itself.
-
-Run: ``uv run python scripts/bench_parse.py``
+Run ``uv run --locked python scripts/bench_parse.py``; add ``--artifact PATH`` for the
+verified tokenizer artifact. Cases cover long payloads, many messages and small
+chunks. Event queues are drained as a streaming consumer would drain them.
 """
 
 from __future__ import annotations
 
+import argparse
 import time
+import tracemalloc
 from collections.abc import Callable
 
-from apertus_common import (
-    Assistant,
-    Conversation,
-    OutputMessage,
-    Think,
-    ToolCall,
-    Wait,
-    render_str,
-)
-from apertus_common.core._scan import TextLexer
-from apertus_common.parsing import StreamParser
-
-MESSAGES = 3_000
-REPEATS = 5
+from apertus_common import Conversation, Reply, TextStreamParser, Wait, render_str
 
 
-def build_transcript(messages: int) -> str:
-    """Render an output-only conversation with realistic mixed messages."""
-    items: list[OutputMessage | Wait] = []
-    for index in range(messages):
-        cycle = index % 3
-        if cycle == 0:
-            items.append(Think(payload="considering the request " * 20))
-        elif cycle == 1:
-            items.append(
-                ToolCall(
-                    id=f"search:{index}",
-                    name="search",
-                    args={"query": "benchmark " * 10, "limit": index},
-                )
-            )
-        else:
-            items.append(Assistant(payload="a helpful streamed reply " * 40))
-    items.append(Wait())
-    return render_str(Conversation.model_validate({"items": items}))
-
-
-def best_seconds(action: Callable[[], None], repeats: int) -> float:
-    """Return the fastest wall-clock time of *repeats* runs of *action*."""
+def measure(label: str, size: int, action: Callable[[], object], repeats: int) -> None:
     best = float("inf")
     for _ in range(repeats):
         started = time.perf_counter()
         action()
         best = min(best, time.perf_counter() - started)
-    return best
+    tracemalloc.start()
+    action()
+    _, peak = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+    print(
+        f"{label:32s} {size / best / 1e6:8.2f} Munits/s  {best * 1000:8.1f} ms  peak {peak / 1e6:.2f} MB"
+    )
 
 
 def main() -> None:
-    text = build_transcript(MESSAGES)
-    megabytes = len(text.encode()) / 1_000_000
+    args = argparse.ArgumentParser(description=__doc__)
+    args.add_argument("--artifact")
+    args.add_argument("--repeats", type=int, default=3)
+    options = args.parse_args()
+    fixtures = {
+        "long": Conversation(items=(Reply(payload="e\u0301雪🚀 " * 100_000), Wait())),
+        "many": Conversation(
+            items=(*(Reply(payload="short reply") for _ in range(3_000)), Wait())
+        ),
+    }
+    for name, conversation in fixtures.items():
+        text = render_str(conversation)
+        for chunk_size in (len(text), 7, 128):
 
-    def scan() -> None:
-        lexer = TextLexer()
-        lexer.push(text)
-        lexer.finish()
+            def parse_text(text: str = text, chunk_size: int = chunk_size) -> object:
+                parser = TextStreamParser()
+                for offset in range(0, len(text), chunk_size):
+                    parser.push_text(text[offset : offset + chunk_size])
+                    parser.take_events()
+                return parser.finish()
 
-    def parse() -> None:
-        StreamParser.parse(text)
+            measure(f"text/{name}/{chunk_size}", len(text), parse_text, options.repeats)
+        if options.artifact:
+            from apertus_common import ApertusEncoding, load_encoding
 
-    scan_seconds = best_seconds(scan, REPEATS)
-    parse_seconds = best_seconds(parse, REPEATS)
+            encoding = load_encoding(options.artifact)
+            tokens = encoding.encode_items(conversation.items)
+            for chunk_size in (len(tokens), 1, 32):
 
-    print(f"transcript: {MESSAGES} messages, {megabytes:.1f} MB")
-    print(
-        f"TextLexer scan:     {megabytes / scan_seconds:8.1f} MB/s"
-        f"  ({scan_seconds * 1000:.1f} ms)"
-    )
-    print(
-        f"StreamParser.parse: {megabytes / parse_seconds:8.1f} MB/s"
-        f"  ({parse_seconds * 1000:.1f} ms,"
-        f" {MESSAGES / parse_seconds:,.0f} messages/s)"
-    )
+                def parse_tokens(
+                    tokens: list[int] = tokens,
+                    chunk_size: int = chunk_size,
+                    encoding: ApertusEncoding = encoding,
+                ) -> object:
+                    parser = encoding.output_parser()
+                    for offset in range(0, len(tokens), chunk_size):
+                        parser.push_tokens(tokens[offset : offset + chunk_size])
+                        parser.take_events()
+                    return parser.finish()
+
+                measure(
+                    f"tokens/{name}/{chunk_size}",
+                    len(tokens),
+                    parse_tokens,
+                    options.repeats,
+                )
 
 
 if __name__ == "__main__":

@@ -1,8 +1,8 @@
 """The wire IR: the middle layer between the typed model and the wire.
 
-A conversation renders to a flat sequence of wire atoms. The string form is a
-pure projection of that sequence, and the planned token form will be another,
-so framing cannot drift between them. ``Control`` atoms carry framing,
+A conversation renders to a flat sequence of wire atoms. String and token
+encoding project the same sequence, so framing cannot drift between them.
+``Control`` atoms carry framing,
 ``Text`` atoms carry ordinary text with its trust origin. Framing is decided
 in exactly one place, the renderer that produces the atoms.
 """
@@ -17,13 +17,10 @@ from typing import Literal
 class ControlToken(StrEnum):
     """The control-token inventory, name to surface glyph.
 
-    Glyphs are the library's explicit map for the string projection; the
-    planned token projection will map the same names to registered single token
-    IDs from the tokenizer artifact.
+    Glyphs are the library's explicit map for the string projection; token
+    encoding maps the same names to registered IDs from the tokenizer artifact.
     """
 
-    SYS = "<|sys|>"
-    SYS_END = "<|/sys|>"
     IN = "<|in|>"
     IN_END = "<|/in|>"
     OUT = "<|out|>"
@@ -38,6 +35,7 @@ class Control:
     """One control token; projects to its glyph or its registered id."""
 
     token: ControlToken
+    loss_weight: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,13 +43,14 @@ class Text:
     """A run of ordinary text.
 
     ``trust`` records the origin: ``structural`` text is renderer-written
-    syntax (framing whitespace, header keys, tag markup) while ``payload``
-    text carries model-derived content and must be encoded with
-    special-token recognition disabled in the token projection.
+    syntax while ``payload`` text carries message content. Both are encoded with
+    special-token recognition disabled. ``loss_weight`` is training metadata
+    and never enters the wire text.
     """
 
     text: str
     trust: Literal["structural", "payload"]
+    loss_weight: float = 0.0
 
 
 WireAtom = Control | Text

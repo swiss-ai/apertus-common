@@ -5,24 +5,39 @@
 ## Project references
 
 `apertus-common` is a typed reference library for the Apertus conversation
-format. The current text-only pilot still needs alignment with the Apertus 2
-profile.
+format. The text-only implementation targets the Apertus 2 profile; external rollout
+gates are tracked in DEVELOPMENT.md.
 
-- Read [DEVELOPMENT.md](DEVELOPMENT.md) before implementing changes. It owns
-  scope, plans, open decisions, and module/API conventions.
+- Read `DEVELOPMENT.md`, when available, before implementing changes. This
+  ignored, local-only file owns scope, plans, open decisions, and module/API
+  conventions; it is not included in fresh clones.
 - [docs/design.md](docs/design.md) records implemented behavior. Keep it in
-  sync with code; future proposals belong in `DEVELOPMENT.md`.
+  sync with code. Unplanned library ideas belong in
+  [program issue #856](https://github.com/swiss-ai/apertus-program/issues/856);
+  development plans belong in local `DEVELOPMENT.md`, when available.
 - [README.md](README.md) provides the overview, next tasks, upstream links,
   and canonical development commands.
 - Format and profile repository: `/Users/rkre/swissai_repos/apertus-2-format-spec-proposal`.
-  Read its `spec.md` and `profile/apertus_2/apertus_2.md`. This repository is a
+  Read its `spec.md` and `profile/apertus_2/apertus_2.md` from upstream `v1`
+  (`origin/v1` in the local checkout; the local `v1` branch may be stale).
+  The implemented revision is recorded in `docs/design.md`. This repository is a
   read-only source of truth; raise conflicts instead of silently deviating.
 - Tokenizer repository: `/Users/rkre/swissai_repos/apertus-omni-tokenizer`.
-  Consume its artifact through the planned integration; never vendor or
-  hand-edit tokenizer files here.
-- Core interface reference: [openai-harmony](https://github.com/openai/harmony),
-  local checkout `/Users/rkre/swissai_repos/harmony`.
+  The [verified instruct baseline](https://github.com/swiss-ai/apertus-omni-tokenizer/tree/b801ff1b00d933d10bba90b0c22307157299faa7/tokenizers/Apertus_2_instruct)
+  is merged on `main` at `b801ff1`. Check upstream `main` and
+  `omnitok/registry.py` for suitable updates; select and record the revision
+  matching the model/profile. Loader requirements are in `docs/design.md`;
+  source revisions/checksums are not enforced. Consume artifacts through
+  `load_encoding`; never vendor or hand-edit tokenizer files here.
+- Framework integration checkouts (Transformers, vLLM):
+  `/Users/rkre/swissai_repos/apertus2-integration-work/`; status and open
+  findings are in DEVELOPMENT.md.
+- Core interface references: [openai-harmony](https://github.com/openai/harmony),
+  local checkout `/Users/rkre/swissai_repos/harmony`, and
+  [mistral-common](https://github.com/mistralai/mistral-common), local checkout
+  `/Users/rkre/PycharmProjects/mistral-common`.
 - Local Swiss AI vLLM checkout: `/Users/rkre/swissai_repos/vllm_swissai`.
+- Program tracking issues are listed in the local `DEVELOPMENT.md`, when available.
 
 ## Working conventions
 
@@ -30,6 +45,6 @@ profile.
   repository checks, tests, and the full CI gate. Commands are maintained in
   the [README development section](README.md#development).
 - Python >= 3.13; use `uv` for dependencies and execution.
-- Follow [module and API conventions](DEVELOPMENT.md#module-and-api-conventions).
+- Follow the module and API conventions in local `DEVELOPMENT.md`, when available.
 - Keep documentation and comments concise and free of em dashes.
 - No Jinja maintenance or generation. Multimodal integration is out of scope.

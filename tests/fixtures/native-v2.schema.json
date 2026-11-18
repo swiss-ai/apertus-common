@@ -1,0 +1,708 @@
+{
+  "$defs": {
+    "Call": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "call",
+          "default": "call",
+          "title": "Type",
+          "type": "string"
+        },
+        "payload": {
+          "pattern": "^[^\\uD800-\\uDFFF]*$",
+          "title": "Payload",
+          "type": "string"
+        },
+        "loss_weight": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Loss Weight"
+        },
+        "name": {
+          "minLength": 1,
+          "pattern": "^[^\\s\\uD800-\\uDFFF]*(?![\\s\\S])",
+          "title": "Name",
+          "type": "string"
+        },
+        "counter": {
+          "title": "Counter",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "payload",
+        "name",
+        "counter",
+        "type"
+      ],
+      "title": "Call",
+      "type": "object"
+    },
+    "Claim": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "claim",
+          "default": "claim",
+          "title": "Type",
+          "type": "string"
+        },
+        "payload": {
+          "pattern": "^[^\\uD800-\\uDFFF]*$",
+          "title": "Payload",
+          "type": "string"
+        },
+        "loss_weight": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Loss Weight"
+        }
+      },
+      "required": [
+        "payload",
+        "type"
+      ],
+      "title": "Claim",
+      "type": "object"
+    },
+    "Document": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "document",
+          "default": "document",
+          "title": "Type",
+          "type": "string"
+        },
+        "payload": {
+          "pattern": "^[^\\uD800-\\uDFFF]*$",
+          "title": "Payload",
+          "type": "string"
+        },
+        "loss_weight": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Loss Weight"
+        },
+        "from": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "^[^\\s\\uD800-\\uDFFF]*(?![\\s\\S])",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "From"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "^[^\\s\\uD800-\\uDFFF]*(?![\\s\\S])",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        }
+      },
+      "required": [
+        "payload",
+        "type"
+      ],
+      "title": "Document",
+      "type": "object"
+    },
+    "FiniteJsonObject": {
+      "additionalProperties": {
+        "$dynamicAnchor": "finiteJsonObjectValue",
+        "anyOf": [
+          {
+            "type": "null"
+          },
+          {
+            "type": "boolean"
+          },
+          {
+            "type": "integer"
+          },
+          {
+            "type": "number"
+          },
+          {
+            "pattern": "^[^\\uD800-\\uDFFF]*$",
+            "type": "string"
+          },
+          {
+            "items": {
+              "$dynamicRef": "#finiteJsonObjectValue"
+            },
+            "type": "array"
+          },
+          {
+            "additionalProperties": {
+              "$dynamicRef": "#finiteJsonObjectValue"
+            },
+            "propertyNames": {
+              "pattern": "^[^\\uD800-\\uDFFF]*$",
+              "type": "string"
+            },
+            "type": "object"
+          }
+        ]
+      },
+      "propertyNames": {
+        "pattern": "^[^\\uD800-\\uDFFF]*$",
+        "type": "string"
+      },
+      "type": "object"
+    },
+    "HeaderJsonObject": {
+      "additionalProperties": {
+        "$dynamicAnchor": "headerJsonValue",
+        "anyOf": [
+          {
+            "type": "null"
+          },
+          {
+            "type": "boolean"
+          },
+          {
+            "type": "integer"
+          },
+          {
+            "type": "number"
+          },
+          {
+            "pattern": "^[^\\s\\uD800-\\uDFFF]*(?![\\s\\S])",
+            "type": "string"
+          },
+          {
+            "items": {
+              "$dynamicRef": "#headerJsonValue"
+            },
+            "type": "array"
+          },
+          {
+            "additionalProperties": {
+              "$dynamicRef": "#headerJsonValue"
+            },
+            "propertyNames": {
+              "pattern": "^[^\\s\\uD800-\\uDFFF]*(?![\\s\\S])",
+              "type": "string"
+            },
+            "type": "object"
+          }
+        ]
+      },
+      "propertyNames": {
+        "pattern": "^[^\\s\\uD800-\\uDFFF]*(?![\\s\\S])",
+        "type": "string"
+      },
+      "type": "object"
+    },
+    "Host": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "host",
+          "default": "host",
+          "title": "Type",
+          "type": "string"
+        },
+        "payload": {
+          "pattern": "^[^\\uD800-\\uDFFF]*$",
+          "title": "Payload",
+          "type": "string"
+        },
+        "loss_weight": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Loss Weight"
+        }
+      },
+      "required": [
+        "payload",
+        "type"
+      ],
+      "title": "Host",
+      "type": "object"
+    },
+    "ImmutableList_Annotated_Union_Host__User__Document__Result__Think__Reply__Claim__Call__UnknownOutput__Wait___FieldInfo_annotation_NoneType__required_True__discriminator__type____": {
+      "items": {
+        "discriminator": {
+          "mapping": {
+            "call": "#/$defs/Call",
+            "claim": "#/$defs/Claim",
+            "document": "#/$defs/Document",
+            "host": "#/$defs/Host",
+            "reply": "#/$defs/Reply",
+            "result": "#/$defs/Result",
+            "think": "#/$defs/Think",
+            "unknown_output": "#/$defs/UnknownOutput",
+            "user": "#/$defs/User",
+            "wait": "#/$defs/Wait"
+          },
+          "propertyName": "type"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/$defs/Host"
+          },
+          {
+            "$ref": "#/$defs/User"
+          },
+          {
+            "$ref": "#/$defs/Document"
+          },
+          {
+            "$ref": "#/$defs/Result"
+          },
+          {
+            "$ref": "#/$defs/Think"
+          },
+          {
+            "$ref": "#/$defs/Reply"
+          },
+          {
+            "$ref": "#/$defs/Claim"
+          },
+          {
+            "$ref": "#/$defs/Call"
+          },
+          {
+            "$ref": "#/$defs/UnknownOutput"
+          },
+          {
+            "$ref": "#/$defs/Wait"
+          }
+        ]
+      },
+      "type": "array"
+    },
+    "ImmutableList_ToolSpec_": {
+      "items": {
+        "$ref": "#/$defs/ToolSpec"
+      },
+      "type": "array"
+    },
+    "Reply": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "reply",
+          "default": "reply",
+          "title": "Type",
+          "type": "string"
+        },
+        "payload": {
+          "pattern": "^[^\\uD800-\\uDFFF]*$",
+          "title": "Payload",
+          "type": "string"
+        },
+        "loss_weight": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Loss Weight"
+        }
+      },
+      "required": [
+        "payload",
+        "type"
+      ],
+      "title": "Reply",
+      "type": "object"
+    },
+    "Result": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "result",
+          "default": "result",
+          "title": "Type",
+          "type": "string"
+        },
+        "payload": {
+          "pattern": "^[^\\uD800-\\uDFFF]*$",
+          "title": "Payload",
+          "type": "string"
+        },
+        "loss_weight": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Loss Weight"
+        },
+        "name": {
+          "minLength": 1,
+          "pattern": "^[^\\s\\uD800-\\uDFFF]*(?![\\s\\S])",
+          "title": "Name",
+          "type": "string"
+        },
+        "counter": {
+          "title": "Counter",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "payload",
+        "name",
+        "counter",
+        "type"
+      ],
+      "title": "Result",
+      "type": "object"
+    },
+    "SystemPrompt": {
+      "additionalProperties": false,
+      "properties": {
+        "identity": {
+          "anyOf": [
+            {
+              "pattern": "^[^\\uD800-\\uDFFF]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Identity"
+        },
+        "thinking": {
+          "$ref": "#/$defs/Thinking"
+        },
+        "behavior": {
+          "anyOf": [
+            {
+              "pattern": "^[^\\uD800-\\uDFFF]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Behavior"
+        },
+        "tools": {
+          "$ref": "#/$defs/ImmutableList_ToolSpec_"
+        },
+        "environment": {
+          "anyOf": [
+            {
+              "pattern": "^[^\\uD800-\\uDFFF]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Environment"
+        },
+        "loss_weight": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Loss Weight"
+        }
+      },
+      "required": [
+        "thinking"
+      ],
+      "title": "SystemPrompt",
+      "type": "object"
+    },
+    "Think": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "think",
+          "default": "think",
+          "title": "Type",
+          "type": "string"
+        },
+        "payload": {
+          "pattern": "^[^\\uD800-\\uDFFF]*$",
+          "title": "Payload",
+          "type": "string"
+        },
+        "loss_weight": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Loss Weight"
+        }
+      },
+      "required": [
+        "payload",
+        "type"
+      ],
+      "title": "Think",
+      "type": "object"
+    },
+    "Thinking": {
+      "enum": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "title": "Thinking",
+      "type": "string"
+    },
+    "ToolSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "minLength": 1,
+          "pattern": "^[^\\s\\uD800-\\uDFFF]*(?![\\s\\S])",
+          "title": "Name",
+          "type": "string"
+        },
+        "description": {
+          "pattern": "^[^\\uD800-\\uDFFF]*$",
+          "title": "Description",
+          "type": "string"
+        },
+        "schema": {
+          "$ref": "#/$defs/FiniteJsonObject"
+        },
+        "policy": {
+          "anyOf": [
+            {
+              "pattern": "^[^\\uD800-\\uDFFF]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Policy"
+        }
+      },
+      "required": [
+        "name",
+        "description",
+        "schema"
+      ],
+      "title": "ToolSpec",
+      "type": "object"
+    },
+    "UnknownOutput": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "unknown_output",
+          "default": "unknown_output",
+          "title": "Type",
+          "type": "string"
+        },
+        "payload": {
+          "pattern": "^[^\\uD800-\\uDFFF]*$",
+          "title": "Payload",
+          "type": "string"
+        },
+        "loss_weight": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Loss Weight"
+        },
+        "output_type": {
+          "not": {
+            "enum": [
+              "call",
+              "claim",
+              "reply",
+              "think"
+            ]
+          },
+          "pattern": "^[A-Za-z0-9_-]+(?![\\s\\S])",
+          "title": "Output Type",
+          "type": "string"
+        },
+        "headers": {
+          "$ref": "#/$defs/HeaderJsonObject"
+        }
+      },
+      "required": [
+        "payload",
+        "output_type",
+        "type"
+      ],
+      "title": "UnknownOutput",
+      "type": "object"
+    },
+    "User": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "user",
+          "default": "user",
+          "title": "Type",
+          "type": "string"
+        },
+        "payload": {
+          "pattern": "^[^\\uD800-\\uDFFF]*$",
+          "title": "Payload",
+          "type": "string"
+        },
+        "loss_weight": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Loss Weight"
+        }
+      },
+      "required": [
+        "payload",
+        "type"
+      ],
+      "title": "User",
+      "type": "object"
+    },
+    "Wait": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "wait",
+          "default": "wait",
+          "title": "Type",
+          "type": "string"
+        },
+        "loss_weight": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Loss Weight"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "Wait",
+      "type": "object"
+    }
+  },
+  "$id": "urn:apertus-common:native:2",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": 2,
+      "default": 2,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "system": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/SystemPrompt"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "items": {
+      "$ref": "#/$defs/ImmutableList_Annotated_Union_Host__User__Document__Result__Think__Reply__Claim__Call__UnknownOutput__Wait___FieldInfo_annotation_NoneType__required_True__discriminator__type____"
+    }
+  },
+  "required": [
+    "schema_version"
+  ],
+  "title": "Conversation",
+  "type": "object"
+}

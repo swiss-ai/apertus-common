@@ -14,10 +14,7 @@ from apertus_common.core._lexeme import ControlLexeme, Lexeme, SourceSpan, TextL
 from apertus_common.core._scan import TextLexer
 from apertus_common.core._wire import ControlToken
 
-MIXED = (
-    "<|out|> type=assistant <|hdr|> a <b> c <|/out|>\n\n"
-    "<|out|> type=think <|hdr|> d <|/out|>\n<|wait|>"
-)
+MIXED = "<|out|>reply<|hdr|>a <b> c<|/out|><|out|>think<|hdr|>d<|/out|><|wait|>"
 
 
 def merged(lexemes: list[Lexeme]) -> list[tuple[str, str, int, int]]:

@@ -1,48 +1,30 @@
-"""Deep immutability: frozen models and validated container storage."""
-
-import math
-from collections.abc import Mapping, Sequence
+"""Caller mutation cannot alter validated native objects."""
 
 import pytest
 from pydantic import ValidationError
 
-from apertus_common import Conversation, Harness, ToolCall, Wait
+from apertus_common import Conversation, ToolSpec, User
 
 
-def test_frozen_assignment_is_rejected() -> None:
-    call = ToolCall(id="f:1", name="f", args={})
+def test_recursive_schema_freezing_and_serialization():
+    source = {"type": "object", "properties": {"x": {"enum": [1, 2]}}}
+    tool = ToolSpec(name="t", description="d", json_schema=source)
+    source["properties"]["x"]["enum"].append(3)
+    assert list(tool.json_schema["properties"]["x"]["enum"]) == [1, 2]
+    with pytest.raises(TypeError):
+        tool.json_schema["new"] = 1
+    with pytest.raises(TypeError):
+        tool.json_schema["properties"]["x"]["enum"][0] = 3
+    with pytest.raises(TypeError):
+        del tool.json_schema._FrozenDict__items
+
+
+def test_conversation_copies_input_container_and_freezes_models():
+    items = [User(payload="a")]
+    conversation = Conversation(items=items)
+    items.append(User(payload="b"))
+    assert len(conversation.items) == 1
     with pytest.raises(ValidationError):
-        call.id = "g:2"
-
-
-def test_mapping_storage_is_immutable() -> None:
-    message = Harness(payload="x", extras={"lang": "en"})
+        conversation.items[0].payload = "changed"
     with pytest.raises(TypeError):
-        message.extras["other"] = "de"
-    with pytest.raises(TypeError):
-        dict.__setitem__(message.extras, "other", "de")
-    with pytest.raises(TypeError):
-        message.extras.__init__({"other": "de"})
-
-
-def test_sequence_storage_is_immutable() -> None:
-    conversation = Conversation(items=[Harness(payload="h"), Wait()])
-    with pytest.raises(AttributeError):
-        conversation.items.append(Wait())
-    with pytest.raises(TypeError):
-        list.append(conversation.items, Wait())
-    with pytest.raises(TypeError):
-        conversation.items.__init__([Wait()])
-    assert isinstance(conversation.items[0], Harness)
-    assert conversation.items[0:1] == [conversation.items[0]]
-
-
-def test_tool_call_args_are_recursively_immutable() -> None:
-    call = ToolCall(id="f:1", name="f", args={"nested": []})
-    assert isinstance(call.args, Mapping)
-    with pytest.raises(TypeError):
-        call.args["other"] = math.inf
-    nested = call.args["nested"]
-    assert isinstance(nested, Sequence)
-    with pytest.raises(AttributeError):
-        nested.append(math.inf)
+        del conversation.items._FrozenList__items
