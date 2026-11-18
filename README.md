@@ -211,6 +211,11 @@ Details: [supported mappings and loss policies](docs/design.md#openai-mapping),
 
 ## Serve with vLLM
 
+> [!WARNING]
+> The vLLM plugin is temporary work in progress. It will likely be replaced by a
+> proper vLLM integration, so its flags, behavior and module may change or be
+> removed without notice.
+
 Installing this package next to vLLM (0.28 or newer) registers an `apertus2`
 tokenizer mode and parsers through vLLM's `vllm.general_plugins` entry point,
 so an Apertus 2 checkpoint serves `/v1/chat/completions` with no chat template:
@@ -226,11 +231,12 @@ tokenizer; generated `think`, `reply` and `call` frames stream back as
 `reasoning`, `content` and `tool_calls`. Other frame kinds (`claim`, unknown)
 pass through as content. `/v1/completions` is unchanged. Not yet applied:
 generation constraints (`forbidden_token_ids`) and the tool-call ID context for
-multi-turn tool results.
+multi-turn tool results. vLLM decodes replayed tool-call arguments, so the
+plugin re-serializes them as compact JSON; other spellings are normalized.
 
 The integration lives in `apertus_common.vllm`, is excluded from the strict
 type checks (vLLM has no macOS wheels) and is tested in a CPU-only vLLM
-container: `tests/vllm_plugin/Dockerfile`, then `pytest tests/vllm` with
+container: `tests/vllm_plugin/Dockerfile`, then `pytest tests/vllm_plugin` with
 `APERTUS_ENCODING` pointing at an `Apertus_2_instruct` tokenizer directory.
 
 ## Prepare datasets

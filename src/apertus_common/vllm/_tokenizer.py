@@ -47,12 +47,16 @@ def _arguments_json(arguments: Any) -> str:
 
     vLLM parses the request's JSON string into a dict before the tokenizer sees the
     conversation, so a call with arguments arrives as a dict (``{}`` for none).
+    Dicts are serialized as compact JSON, the form the model emits, so canonical
+    arguments replay to the generated tokens. vLLM has already discarded the
+    original string, so other spellings (escapes, number formats, whitespace)
+    are normalized.
     """
     if isinstance(arguments, str):
         return arguments or "{}"
     if arguments is None:
         return "{}"
-    return json.dumps(arguments, ensure_ascii=False)
+    return json.dumps(arguments, ensure_ascii=False, separators=(",", ":"))
 
 
 def _clean_messages(messages: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
