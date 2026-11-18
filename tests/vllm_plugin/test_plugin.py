@@ -69,7 +69,7 @@ def test_tool_call_history_accepts_arguments_as_vllm_parses_them(
     ]
     prompt = tokenizer.apply_chat_template(messages, tools=TOOLS, tokenize=False)
     expected = (
-        json.dumps(arguments, ensure_ascii=False)
+        json.dumps(arguments, ensure_ascii=False, separators=(",", ":"))
         if isinstance(arguments, dict)
         else (arguments or "{}")
     )
@@ -110,6 +110,31 @@ def test_apply_chat_template_matches_library_encoding(tokenizer) -> None:
     assert rendered.endswith("<|in|>user<|hdr|>Who is Pablo Picasso?<|/in|>")
     assert '"thinking":"low"' in rendered
     assert "get_weather" in rendered
+
+
+def test_replayed_tool_call_with_parsed_arguments(tokenizer) -> None:
+    # vLLM decodes prior call arguments to a dict before rendering; the encoding
+    # must match the compact JSON string the model emitted and clients replay.
+    call = {"id": "call_1", "type": "function"}
+    reply = {"role": "tool", "tool_call_id": "call_1", "content": "Sunny"}
+
+    def history(arguments):
+        function = {"name": "get_weather", "arguments": arguments}
+        assistant = {
+            "role": "assistant",
+            "tool_calls": [{**call, "function": function}],
+        }
+        return [*MESSAGES, assistant, reply]
+
+    raw = history('{"city":"SF"}')
+    parsed = history({"city": "SF"})
+    ids = tokenizer.apply_chat_template(
+        raw, tools=TOOLS, conversation=parsed, chat_template=None, return_dict=False
+    )
+    expected = load_encoding(Path(ARTIFACT)).encode_conversation(
+        from_openai(raw, tools=TOOLS).value
+    )
+    assert ids == expected
 
 
 def test_plain_text_encoding_is_untouched(tokenizer) -> None:
