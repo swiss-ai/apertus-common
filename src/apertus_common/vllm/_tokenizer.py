@@ -12,6 +12,7 @@ from __future__ import annotations
 import copy
 import json
 import logging
+import re
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
@@ -21,25 +22,66 @@ from vllm.tokenizers.protocol import TokenizerLike
 
 from apertus_common.core import render_str
 from apertus_common.encoding import ApertusEncoding, load_encoding
-from apertus_common.formats import from_openai
+from apertus_common.errors import ApertusFormatError
+from apertus_common.formats import (
+    MappingPolicy,
+    OpenAIMappingContext,
+    ToolAssociation,
+    from_openai,
+)
 
 if TYPE_CHECKING:
     from vllm.entrypoints.chat_utils import ChatCompletionMessageParam
 
 logger = logging.getLogger(__name__)
 
-# OpenAI reasoning_effort values outside the format's low/medium/high.
-_EFFORT_ALIASES = {"none": "low", "minimal": "low", "max": "high", "xhigh": "high"}
+# OpenAI reasoning_effort values above the format's low/medium/high.
+_EFFORT_ALIASES = {"max": "high", "xhigh": "high"}
+_THINKING_OFF = {"none", "minimal"}
 
 # Includes reasoning_content: from_openai keeps prior thinking as think frames.
+# Participant names have no Apertus meaning and are dropped.
 _HF_MESSAGE_KEYS = {
     "role",
     "content",
-    "name",
     "tool_calls",
     "tool_call_id",
     "reasoning_content",
 }
+
+# Leading system and developer messages merge into the behavior field.
+_POLICY = MappingPolicy(merge_system_messages=True)
+
+# Tool-call IDs minted by the parser; they carry the call counter.
+CALL_ID = re.compile(r"apertus_(\d+)")
+
+
+def call_id(counter: int) -> str:
+    return f"apertus_{counter}"
+
+
+def _context(messages: Sequence[Mapping[str, Any]]) -> OpenAIMappingContext:
+    """Counters of replayed calls whose IDs this integration minted.
+
+    A client that drops earlier messages keeps the counters of the calls it
+    replays; other IDs are numbered after them in order.
+    """
+    associations: dict[int, ToolAssociation] = {}
+    for message in messages:
+        if message.get("role") != "assistant":
+            continue
+        for call in message.get("tool_calls") or ():
+            match = CALL_ID.fullmatch(str(call.get("id")))
+            name = call["function"]["name"]
+            if match and isinstance(name, str) and name:
+                counter = int(match[1])
+                associations[counter] = ToolAssociation(
+                    id=match[0], name=name, counter=counter
+                )
+    return OpenAIMappingContext(
+        associations=tuple(associations.values()),
+        next_counter=max(associations, default=-1) + 1,
+    )
 
 
 def _arguments_json(arguments: Any) -> str:
@@ -50,10 +92,11 @@ def _arguments_json(arguments: Any) -> str:
     Dicts are serialized as compact JSON, the form the model emits, so canonical
     arguments replay to the generated tokens. vLLM has already discarded the
     original string, so other spellings (escapes, number formats, whitespace)
-    are normalized.
+    are normalized. Strings pass unchanged: the renderer keeps arguments that
+    are not a JSON object as generated.
     """
     if isinstance(arguments, str):
-        return arguments or "{}"
+        return arguments
     if arguments is None:
         return "{}"
     return json.dumps(arguments, ensure_ascii=False, separators=(",", ":"))
@@ -79,6 +122,14 @@ def _clean_messages(messages: Sequence[Mapping[str, Any]]) -> list[dict[str, Any
                 }
                 for call in calls
             ]
+        # vLLM turns a missing content into "", which would encode an empty
+        # reply the model never generated.
+        if (
+            kept.get("role") == "assistant"
+            and kept.get("content") == ""
+            and (calls or "reasoning_content" in kept)
+        ):
+            del kept["content"]
         cleaned.append(kept)
     return cleaned
 
@@ -90,23 +141,45 @@ def encode_chat(
     tools: Sequence[Mapping[str, Any]] | None = None,
     reasoning_effort: str | None = None,
     system_defaults: Mapping[str, Any] | None = None,
+    enable_thinking: bool | None = None,
     tokenize: bool = True,
 ) -> list[int] | str:
-    """Map OpenAI messages to an Apertus 2 conversation ending at ``<|/in|>``."""
+    """Map OpenAI messages to an Apertus 2 conversation ending at ``<|/in|>``.
+
+    Invalid input raises ``ValueError``, which vLLM returns as HTTP 400.
+    """
+    if messages and messages[-1].get("role") == "assistant":
+        raise ValueError(
+            "Apertus 2 generates after an input message: end the conversation "
+            "with a user or tool message (assistant prefill is unsupported)"
+        )
+    if reasoning_effort in _THINKING_OFF or enable_thinking is False:
+        raise ValueError(
+            "Apertus 2 always thinks: use reasoning_effort low, medium or high"
+        )
     if reasoning_effort is not None:
         reasoning_effort = _EFFORT_ALIASES.get(reasoning_effort, reasoning_effort)
-    result = from_openai(
-        _clean_messages(messages),
-        tools=list(tools) if tools else None,
-        reasoning_effort=reasoning_effort,
-        system_defaults=dict(system_defaults) if system_defaults else None,
-    )
-    for diagnostic in result.diagnostics:
-        if diagnostic.lossy:
-            logger.warning("apertus2 chat mapping: %s", diagnostic.message)
-    if not tokenize:
-        return render_str(result.value)
-    return encoding.encode_conversation(result.value)
+    try:
+        cleaned = _clean_messages(messages)
+        result = from_openai(
+            cleaned,
+            tools=list(tools) if tools else None,
+            reasoning_effort=reasoning_effort,
+            system_defaults=dict(system_defaults) if system_defaults else None,
+            context=_context(cleaned),
+            policy=_POLICY,
+        )
+        for diagnostic in result.diagnostics:
+            # Merging system and developer messages is the serving policy.
+            if diagnostic.lossy and diagnostic.code != "system-merged":
+                logger.warning("apertus2 chat mapping: %s", diagnostic.message)
+        if not tokenize:
+            return render_str(result.value)
+        return encoding.encode_conversation(result.value)
+    except ApertusFormatError as error:
+        raise ValueError(f"Invalid Apertus 2 conversation: {error}") from error
+    except (AttributeError, KeyError, TypeError) as error:
+        raise ValueError(f"Malformed chat message: {error!r}") from error
 
 
 def _wrap(tokenizer: TokenizersBackend, encoding: ApertusEncoding) -> TokenizersBackend:
@@ -134,6 +207,7 @@ def _wrap(tokenizer: TokenizersBackend, encoding: ApertusEncoding) -> Tokenizers
                 tools=tools,
                 reasoning_effort=effort,
                 system_defaults=kwargs.get("system_defaults"),
+                enable_thinking=kwargs.get("enable_thinking"),
                 tokenize=kwargs.get("tokenize", True),
             )
 
