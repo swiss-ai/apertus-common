@@ -6,9 +6,10 @@ Installed as a ``vllm.general_plugins`` entry point (see ``pyproject.toml``),
 * tokenizer mode and renderer ``apertus2``: chat requests are mapped with
   :func:`apertus_common.from_openai` and encoded to token IDs with
   :func:`apertus_common.load_encoding`;
-* reasoning parser and tool parser ``apertus2``: generated ``<|out|>`` frames
-  become ``reasoning`` (think), ``content`` (reply) and ``tool_calls`` (call),
-  streaming included, through vLLM's declarative parser engine.
+* reasoning parser and tool parser ``apertus2``: generated token IDs are parsed
+  with apertus-common's ``TokenStreamParser``; think, reply and call messages
+  become ``reasoning``, ``content`` and ``tool_calls``, streaming included. The
+  parser also rejects unsupported request options and masks forbidden tokens.
 
 Serve with::
 
