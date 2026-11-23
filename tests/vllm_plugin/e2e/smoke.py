@@ -35,7 +35,7 @@ def post(path: str, body: dict) -> tuple[int, dict | str]:
     request = urllib.request.Request(
         BASE + path,
         data=json.dumps(body).encode(),
-        headers={"Content-Type": "application/json", "x-api-key": "x"},
+        headers={"Content-Type": "application/json"},
     )
     try:
         with urllib.request.urlopen(request, timeout=300) as response:
@@ -85,20 +85,8 @@ def main() -> None:
         "glyphs in user text stay text", status == 200 and controls == plain, controls
     )
 
-    stream_body = {
-        "model": MODEL,
-        "messages": USER,
-        "max_completion_tokens": 16,
-        "stream": True,
-    }
-    request = urllib.request.Request(
-        BASE + "/v1/chat/completions",
-        data=json.dumps(stream_body).encode(),
-        headers={"Content-Type": "application/json"},
-    )
-    with urllib.request.urlopen(request, timeout=300) as response:
-        lines = [line.decode().strip() for line in response]
-    events = [line[6:] for line in lines if line.startswith("data: ")]
+    _, raw = chat(stream=True)
+    events = [line[6:] for line in str(raw).splitlines() if line.startswith("data: ")]
     check("chat stream ends with [DONE]", events[-1:] == ["[DONE]"], events[-2:])
     finish = [
         json.loads(e)["choices"][0].get("finish_reason") for e in events[:-1] if e
@@ -139,6 +127,7 @@ def main() -> None:
         "thinking off": {"reasoning_effort": "none"},
         "bias on wait": {"logit_bias": {"12": -100}},
         "stop_token_ids": {"stop_token_ids": [11]},
+        "parallel_tool_calls false": {"parallel_tool_calls": False},
         "trailing assistant": {
             "messages": [*USER, {"role": "assistant", "content": "x"}]
         },
