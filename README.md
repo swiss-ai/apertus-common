@@ -225,38 +225,53 @@ vllm serve <checkpoint> --tokenizer-mode apertus2 --reasoning-parser apertus2 \
     --enable-auto-tool-choice --tool-call-parser apertus2
 ```
 
-Chat requests are mapped with `from_openai` (`reasoning_effort` and `tools`
-become the system frame; leading system and developer messages merge into
-`behavior`; participant `name`s are dropped) and encoded to token IDs with the
-checkpoint's tokenizer. Generated token IDs are parsed with `TokenStreamParser`,
-so only control token IDs frame messages: `think`, `reply` and `call` messages
-stream back as `reasoning`, `content` and `tool_calls`; a call is returned once
-its message is complete, with its arguments as generated and an ID that carries
-its counter (`apertus_<counter>`), so replayed histories keep their counters
-even when truncated. Claims and unknown output types are omitted; malformed
-output ends the projection (text already streamed stays). Only a cut message is
-flagged (`finish_reason: length`); the profile's recovery notices need
-`/v1/completions` or `return_token_ids`.
+The server (and offline `LLM` with this tokenizer mode) refuses to start
+without `--reasoning-parser apertus2` (requests would skip the guards below)
+and with speculative decoding (vLLM then ignores `logit_bias`).
 
-Requests get a -100 `logit_bias` on every forbidden special token. Options
-that bypass the `<|wait|>` stop or the mask (e.g. `ignore_eos`, `stop`, beam
-search, forced `tool_choice`, constrained outputs, prompt truncation, stop
-token IDs other than `<|wait|>`), turning
-thinking off (`reasoning_effort` `none` or `minimal`, `enable_thinking: false`)
-and invalid conversations (e.g. a trailing assistant message) are rejected
-with HTTP 400; `xhigh` and `max` map to `high`. The server refuses to start
-with speculative decoding, under which vLLM ignores `logit_bias`.
+Requests:
 
-vLLM decodes replayed tool-call arguments, so the plugin re-serializes valid
-ones as compact JSON (other spellings are normalized) and replays the others
-unchanged. One assistant message holds one reasoning, content and tool-call
-slot, so clients keep a burst's order only by sending one assistant message per
-streamed run. Not covered: `/v1/completions` (unchanged; clients apply the
-constraints themselves), the batch endpoint (vLLM 0.28 drops the bias
-there) and the counter IDs of streamed Responses `function_call` items (vLLM
-mints its own IDs there; `response.completed` and non-streaming carry them).
-With `previous_response_id`, earlier calls are not in the request, so a counter
-the model reuses can collide with them.
+- Messages are mapped with `from_openai` and encoded to token IDs; leading
+  system and developer messages merge into `behavior`, participant `name`s are
+  dropped, and `xhigh`/`max` effort maps to `high`.
+- Every request gets a -100 `logit_bias` on all forbidden special tokens.
+- Rejected with HTTP 400: `ignore_eos`, `min_tokens`, beam search, `stop`,
+  stop token IDs other than `<|wait|>`, forced `tool_choice`,
+  `parallel_tool_calls: false`, constrained outputs, prompt truncation,
+  `allowed_token_ids`, `logit_bias` or `bad_words` on special tokens,
+  thinking off (`none`, `minimal`, `enable_thinking: false`) and invalid
+  conversations such as a trailing assistant message.
+- Replay matches the generation: valid tool-call arguments (parsed by vLLM)
+  are re-serialized as compact JSON, others replay unchanged. Clients keep a
+  burst's order only by sending one assistant message per streamed run.
+
+Responses (streaming and non-streaming alike):
+
+- Generated token IDs are parsed with `TokenStreamParser`; only control token
+  IDs frame messages. `think`, `reply` and `call` become `reasoning`, `content`
+  and `tool_calls`.
+- A call is returned once its message is complete, with its arguments as
+  generated and the ID `apertus_<counter>`, so truncated histories keep their
+  counters. A counter the model reuses gets a `_` suffix and is renumbered on
+  replay (the profile would reject it as a harness error); calls with other
+  IDs are numbered after the highest known counter, so mixed histories may
+  replay counters out of order.
+- Calls are dropped when the request disables tools (no tools, or
+  `tool_choice` `none` or `null`). Claims and unknown output
+  types are omitted. Malformed output ends the projection; text already
+  streamed stays.
+- Only a cut message is flagged (`finish_reason: length`), and not when a
+  complete call came first (vLLM then reports `tool_calls`). The profile's
+  recovery needs `/v1/completions` or `return_token_ids`.
+
+Not covered:
+
+- `/v1/completions`: unchanged; clients apply the constraints themselves.
+- The batch endpoint: vLLM 0.28 drops the bias there.
+- `/v1/messages`: vLLM fails a response whose call arguments are not valid JSON.
+- Streamed Responses `function_call` items carry vLLM's own IDs
+  (`response.completed` carries `apertus_<counter>`), and with
+  `previous_response_id` earlier calls are not seen for counter reuse.
 
 The integration lives in `apertus_common.vllm`, is excluded from the strict
 type checks (vLLM has no macOS wheels) and is tested in a CPU-only vLLM
