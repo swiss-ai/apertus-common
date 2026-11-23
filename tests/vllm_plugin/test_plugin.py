@@ -749,6 +749,8 @@ def test_names_dropped_and_leading_developer_merged(tokenizer) -> None:
     [
         {"reasoning_effort": "none"},
         {"reasoning_effort": "minimal"},
+        {"reasoning_effort": "xhigh"},
+        {"reasoning_effort": "max"},
         {"enable_thinking": False},
         {"enable_thinking": "false"},
         {"enable_thinking": 0},
@@ -757,13 +759,6 @@ def test_names_dropped_and_leading_developer_merged(tokenizer) -> None:
 def test_thinking_cannot_be_disabled(tokenizer, kwargs) -> None:
     with pytest.raises(ValueError, match="always thinks"):
         tokenizer.apply_chat_template(MESSAGES, conversation=MESSAGES, **kwargs)
-
-
-def test_effort_above_high_maps_to_high(tokenizer) -> None:
-    rendered = tokenizer.apply_chat_template(
-        MESSAGES, conversation=MESSAGES, reasoning_effort="xhigh", tokenize=False
-    )
-    assert '"thinking":"high"' in rendered
 
 
 @pytest.mark.parametrize(

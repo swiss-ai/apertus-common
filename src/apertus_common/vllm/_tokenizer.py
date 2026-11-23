@@ -35,9 +35,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# OpenAI reasoning_effort values above the format's low/medium/high.
-_EFFORT_ALIASES = {"max": "high", "xhigh": "high"}
-_THINKING_OFF = {"none", "minimal"}
+# The format's thinking levels; no value selects the profile default.
+_EFFORTS = {None, "low", "medium", "high"}
 
 # Includes reasoning_content: from_openai keeps prior thinking as think frames.
 # Participant names have no Apertus meaning and are dropped.
@@ -150,11 +149,10 @@ def encode_chat(
             "with a user or tool message (assistant prefill is unsupported)"
         )
     off = str(enable_thinking).lower() in {"false", "0"}
-    if reasoning_effort in _THINKING_OFF or off:
+    if reasoning_effort not in _EFFORTS or off:
         raise ValueError(
             "Apertus 2 always thinks: use reasoning_effort low, medium or high"
         )
-    reasoning_effort = _EFFORT_ALIASES.get(reasoning_effort, reasoning_effort)
     try:
         cleaned = _clean_messages(messages)
         result = from_openai(

@@ -233,13 +233,15 @@ Requests:
 
 - Messages are mapped with `from_openai` and encoded to token IDs; leading
   system and developer messages merge into `behavior`, participant `name`s are
-  dropped, and `xhigh`/`max` effort maps to `high`.
+  dropped. A later system or developer message is rejected (no host role
+  yet).
 - Every request gets a -100 `logit_bias` on all forbidden special tokens.
 - Rejected with HTTP 400: `ignore_eos`, `min_tokens`, beam search, `stop`,
   stop token IDs other than `<|wait|>`, forced `tool_choice`,
   `parallel_tool_calls: false`, constrained outputs, prompt truncation,
   `allowed_token_ids`, `logit_bias` or `bad_words` on special tokens,
-  thinking off (`none`, `minimal`, `enable_thinking: false`) and invalid
+  `reasoning_effort` other than `low`, `medium` or `high` (including `none`,
+  `xhigh`, `max`), `enable_thinking: false` and invalid
   conversations such as a trailing assistant message.
 - Replay matches the generation: valid tool-call arguments (parsed by vLLM)
   are re-serialized as compact JSON, others replay unchanged. Clients keep a
@@ -258,8 +260,8 @@ Responses (streaming and non-streaming alike):
   replay counters out of order.
 - Calls are dropped when the request disables tools (no tools, or
   `tool_choice` `none` or `null`). Claims and unknown output
-  types are omitted. Malformed output ends the projection; text already
-  streamed stays.
+  types are omitted. At malformed output the plugin stops: messages before it
+  are returned, the rest is dropped (text already streamed stays).
 - Only a cut message is flagged (`finish_reason: length`), and not when a
   complete call came first (vLLM then reports `tool_calls`). The profile's
   recovery needs `/v1/completions` or `return_token_ids`.
