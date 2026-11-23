@@ -19,8 +19,9 @@ vLLM's serving layer calls :meth:`Apertus2Parser.parse` and
 :meth:`Apertus2Parser.parse_delta` for chat completions and responses when
 both parser flags name ``apertus2`` and auto tool choice is on. The class is a
 :class:`ParserEngine` only so that vLLM selects it as that one parser; its
-declarative text config is empty and never frames output. The adapters vLLM
-uses for any other flag combination refuse to parse.
+declarative text config is empty and never frames output. The renderer refuses
+to start without ``--reasoning-parser apertus2``, and the adapters vLLM uses
+for any other flag combination refuse every request.
 """
 
 from __future__ import annotations
@@ -66,7 +67,7 @@ logger = logging.getLogger(__name__)
 # vLLM requires a declarative config; framing comes from token IDs instead.
 _CONFIG = ParserEngineConfig(name="apertus2")
 
-_FLAGS = (
+FLAGS = (
     "Apertus 2 output needs --reasoning-parser apertus2, --tool-call-parser "
     "apertus2 and --enable-auto-tool-choice together"
 )
@@ -77,11 +78,6 @@ class _Delta:
     reasoning: str = ""
     content: str = ""
     calls: list[tuple[str, str, str]] = field(default_factory=list)
-
-    def extend(self, other: _Delta) -> None:
-        self.reasoning += other.reasoning
-        self.content += other.content
-        self.calls += other.calls
 
 
 class _Projection:
@@ -101,9 +97,9 @@ class _Projection:
         self._active: str | None = None
         self._call_ids = used_ids
 
-    def push(self, token_ids: Sequence[int]) -> _Delta:
+    def push(self, token_ids: Sequence[int], *, finished: bool = False) -> _Delta:
         delta = _Delta()
-        if not token_ids or self._closed:
+        if self._closed:
             return delta
         try:
             self._parser.push_tokens(token_ids)
@@ -116,19 +112,13 @@ class _Projection:
                 error.reason.value,
                 error.offset,
             )
-        self._project(self._parser.take_events(), delta)
-        return delta
-
-    def finish(self) -> _Delta:
-        delta = _Delta()
-        if self._closed:
-            return delta
-        self._closed = True
-        try:
-            self._parser.finish()
-        except StreamParseError as error:
-            # Usually max_tokens, which finish_reason already reports.
-            logger.debug("Apertus 2: output ended early (%s)", error.reason.value)
+        if finished and not self._closed:
+            self._closed = True
+            try:
+                self._parser.finish()
+            except StreamParseError as error:
+                # Usually max_tokens, which finish_reason already reports.
+                logger.debug("Apertus 2: output ended early (%s)", error.reason.value)
         self._project(self._parser.take_events(), delta)
         return delta
 
@@ -184,15 +174,12 @@ def _history_call_ids(request: Any) -> set[str]:
     return ids
 
 
-def _tool_output_enabled(request: Any) -> bool:
-    return bool(getattr(request, "tools", None)) and (
-        getattr(request, "tool_choice", None) != "none"
-    )
-
-
-def _without_disabled_calls(delta: _Delta, request: Any) -> None:
+def _drop_disabled_calls(delta: _Delta, request: Any) -> None:
     # Stock serving drops calls here when not streaming; drop them for both.
-    if delta.calls and not _tool_output_enabled(request):
+    enabled = getattr(request, "tools", None) and (
+        getattr(request, "tool_choice", None) not in (None, "none")
+    )
+    if delta.calls and not enabled:
         logger.warning(
             "Apertus 2: %d tool call(s) dropped; the request disables tool output",
             len(delta.calls),
@@ -210,9 +197,41 @@ def _special_ids_in_bias(logit_bias: Any, special: frozenset[int]) -> bool:
     return False
 
 
-class Apertus2Parser(ParserEngine):
-    CONFIG_NAME = "apertus2"
+def _kind(encoding: ApertusEncoding, token_ids: Sequence[int]) -> str:
+    try:
+        return encoding.decode_text(list(token_ids)).strip()
+    except TokenizerError:
+        return ""
 
+
+class _ReasoningCounter:
+    """Count think payload tokens; fed incrementally while streaming."""
+
+    def __init__(self, encoding: ApertusEncoding) -> None:
+        self._encoding = encoding
+        self.tokens = 0
+        self.count = 0
+        self._header: list[int] | None = None
+        self._think = False
+
+    def feed(self, token_ids: Sequence[int]) -> None:
+        controls = self._encoding.controls
+        for token_id in token_ids:
+            if token_id == controls.output_start:
+                self._header, self._think = [], False
+            elif token_id == controls.header_end and self._header is not None:
+                self._think = _kind(self._encoding, self._header) == "think"
+                self._header = None
+            elif token_id == controls.output_end:
+                self._header, self._think = None, False
+            elif self._header is not None:
+                self._header.append(token_id)
+            elif self._think:
+                self.count += 1
+        self.tokens += len(token_ids)
+
+
+class Apertus2Parser(ParserEngine):
     def __init__(
         self,
         tokenizer: TokenizerLike,
@@ -229,6 +248,7 @@ class Apertus2Parser(ParserEngine):
             )
         self._encoding: ApertusEncoding = encoding
         self._stream: _Projection | None = None
+        self._counter = _ReasoningCounter(encoding)
         self._num_calls = 0
 
     def parse(
@@ -241,9 +261,8 @@ class Apertus2Parser(ParserEngine):
         if model_output and not model_output_token_ids:
             raise ValueError("Apertus 2 parsing requires the generated token IDs")
         projection = _Projection(self._encoding, _history_call_ids(request))
-        delta = projection.push(list(model_output_token_ids))
-        delta.extend(projection.finish())
-        _without_disabled_calls(delta, request)
+        delta = projection.push(list(model_output_token_ids), finished=True)
+        _drop_disabled_calls(delta, request)
         calls = [
             FunctionCall(id=call_id, name=name, arguments=arguments)
             for call_id, name, arguments in delta.calls
@@ -261,10 +280,9 @@ class Apertus2Parser(ParserEngine):
     ) -> DeltaMessage | None:
         if self._stream is None:
             self._stream = _Projection(self._encoding, _history_call_ids(request))
-        delta = self._stream.push(delta_token_ids)
-        if finished:
-            delta.extend(self._stream.finish())
-        _without_disabled_calls(delta, request)
+        delta = self._stream.push(delta_token_ids, finished=finished)
+        self._counter.feed(delta_token_ids)
+        _drop_disabled_calls(delta, request)
         fields: dict[str, Any] = {}
         if delta.reasoning and getattr(request, "include_reasoning", True):
             fields["reasoning"] = delta.reasoning
@@ -319,8 +337,9 @@ class Apertus2Parser(ParserEngine):
             for fmt in (response_format, text_format)
         ):
             reasons.append("constrained outputs would force unframed text")
-        if getattr(request, "truncate_prompt_tokens", None) is not None or (
-            hasattr(request, "truncation") and request.truncation != "disabled"
+        if (
+            getattr(request, "truncate_prompt_tokens", None) is not None
+            or getattr(request, "truncation", "disabled") != "disabled"
         ):
             reasons.append("token-level truncation can cut inside a message")
         if _special_ids_in_bias(getattr(request, "logit_bias", None), special):
@@ -329,6 +348,8 @@ class Apertus2Parser(ParserEngine):
             self._encoding.controls.wait
         }:
             reasons.append("stop_token_ids would end a burst before <|wait|>")
+        if getattr(request, "parallel_tool_calls", None) is False:
+            reasons.append("a burst may hold several calls; omit parallel_tool_calls")
         if getattr(request, "allowed_token_ids", None):
             reasons.append("allowed_token_ids could exclude the control tokens")
         if any(
@@ -343,75 +364,47 @@ class Apertus2Parser(ParserEngine):
 
     # ── Reasoning state from token IDs (structured outputs, usage) ─────
 
-    def _kind(self, token_ids: Sequence[int]) -> str:
-        try:
-            return self._encoding.decode_text(list(token_ids)).strip()
-        except TokenizerError:
-            return ""
-
     def is_reasoning_end(self, input_ids: list[int]) -> bool:
         controls = self._encoding.controls
         for i in range(len(input_ids) - 1, -1, -1):
+            if input_ids[i] == controls.input_end:
+                # A new burst starts here and may open with thinking.
+                return False
             if input_ids[i] != controls.output_start:
                 continue
-            kind_ids: list[int] = []
-            for token_id in input_ids[i + 1 :]:
-                if token_id == controls.header_end:
-                    break
-                kind_ids.append(token_id)
-            if self._kind(kind_ids) == "think":
-                return controls.output_end in input_ids[i + 1 :]
-            return True
+            rest = input_ids[i + 1 :]
+            if controls.header_end not in rest:
+                return False
+            kind = _kind(self._encoding, rest[: rest.index(controls.header_end)])
+            return kind != "think" or controls.output_end in rest
         return False
 
     def count_reasoning_tokens(self, token_ids: Sequence[int]) -> int:
-        controls = self._encoding.controls
-        count = 0
-        i = 0
-        while i < len(token_ids):
-            if token_ids[i] != controls.output_start:
-                i += 1
-                continue
-            j = i + 1
-            while j < len(token_ids) and token_ids[j] != controls.header_end:
-                j += 1
-            k = j + 1
-            while k < len(token_ids) and token_ids[k] != controls.output_end:
-                k += 1
-            if self._kind(token_ids[i + 1 : j]) == "think":
-                count += max(0, k - j - 1)
-            i = k + 1
-        return count
+        # Streaming calls this with every prefix; the counter fed by
+        # parse_delta answers those without rescanning.
+        if len(token_ids) == self._counter.tokens:
+            return self._counter.count
+        counter = _ReasoningCounter(self._encoding)
+        counter.feed(token_ids)
+        return counter.count
+
+
+def _refuse(*args: Any, **kwargs: Any) -> NoReturn:
+    raise ValueError(FLAGS)
 
 
 class Apertus2ReasoningParser(ParserEngineReasoningAdapter):
     """Registered so vLLM finds :class:`Apertus2Parser`; never parses alone."""
 
     _parser_engine_cls = Apertus2Parser
-
-    def adjust_request(self, *args: Any, **kwargs: Any) -> NoReturn:
-        raise ValueError(_FLAGS)
-
-    def extract_reasoning(self, *args: Any, **kwargs: Any) -> NoReturn:
-        raise ValueError(_FLAGS)
-
-    def extract_reasoning_streaming(self, *args: Any, **kwargs: Any) -> NoReturn:
-        raise ValueError(_FLAGS)
+    adjust_request = extract_reasoning = extract_reasoning_streaming = _refuse
 
 
 class Apertus2ToolParser(ParserEngineToolAdapter):
     """Registered so vLLM finds :class:`Apertus2Parser`; never parses alone."""
 
     _parser_engine_cls = Apertus2Parser
-
-    def adjust_request(self, *args: Any, **kwargs: Any) -> NoReturn:
-        raise ValueError(_FLAGS)
-
-    def extract_tool_calls(self, *args: Any, **kwargs: Any) -> NoReturn:
-        raise ValueError(_FLAGS)
-
-    def extract_tool_calls_streaming(self, *args: Any, **kwargs: Any) -> NoReturn:
-        raise ValueError(_FLAGS)
+    adjust_request = extract_tool_calls = extract_tool_calls_streaming = _refuse
 
 
 # The serving layer finds the adapters here; with both flags it calls

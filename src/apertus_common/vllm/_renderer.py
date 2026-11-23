@@ -21,6 +21,9 @@ from vllm.renderers.base import BaseRenderer
 from vllm.renderers.inputs.preprocess import parse_dec_only_prompt
 from vllm.utils.async_utils import make_async
 
+from apertus_common.vllm import MODE
+from apertus_common.vllm._parser import FLAGS
+
 if TYPE_CHECKING:
     from vllm.config import VllmConfig
     from vllm.entrypoints.chat_utils import (
@@ -94,12 +97,17 @@ class Apertus2Renderer(BaseRenderer["TokenizerLike"]):
                 "Apertus 2 masks forbidden tokens with logit_bias, which vLLM "
                 "ignores under speculative decoding; serve without it"
             )
+        # Without the reasoning parser, vLLM skips the request guards and the
+        # mask for requests without tools.
+        outputs = getattr(config, "structured_outputs_config", None)
+        if getattr(outputs, "reasoning_parser", None) != MODE:
+            raise ValueError(FLAGS)
         super().__init__(config, tokenizer)
         self._apply_chat_template_async = make_async(
             self._apply_chat_template, executor=self._executor
         )
 
-    def _apply_chat_template(self, *args: Any, **kwargs: Any) -> list[int] | str:
+    def _apply_chat_template(self, *args: Any, **kwargs: Any) -> list[int]:
         kwargs["tokenize"] = True
         return self.get_tokenizer().apply_chat_template(*args, **kwargs)
 
@@ -146,7 +154,7 @@ class Apertus2Renderer(BaseRenderer["TokenizerLike"]):
         return conversation, self._finish(prompt_raw, mm_data, mm_uuids)
 
     @staticmethod
-    def _finish(prompt_raw: list[int] | str, mm_data: Any, mm_uuids: Any) -> DictPrompt:
+    def _finish(prompt_raw: list[int], mm_data: Any, mm_uuids: Any) -> DictPrompt:
         prompt = parse_dec_only_prompt(prompt_raw)
         if mm_data is not None:
             prompt["multi_modal_data"] = mm_data

@@ -53,7 +53,7 @@ _HF_MESSAGE_KEYS = {
 _POLICY = MappingPolicy(merge_system_messages=True)
 
 # Tool-call IDs minted by the parser; they carry the call counter.
-CALL_ID = re.compile(r"apertus_(\d+)")
+_CALL_ID = re.compile(r"apertus_(\d+)")
 
 
 def call_id(counter: int) -> str:
@@ -64,14 +64,14 @@ def _context(messages: Sequence[Mapping[str, Any]]) -> OpenAIMappingContext:
     """Counters of replayed calls whose IDs this integration minted.
 
     A client that drops earlier messages keeps the counters of the calls it
-    replays; other IDs are numbered after them in order.
+    replays; other IDs are numbered after the highest of them, in order.
     """
     associations: dict[int, ToolAssociation] = {}
     for message in messages:
         if message.get("role") != "assistant":
             continue
         for call in message.get("tool_calls") or ():
-            match = CALL_ID.fullmatch(str(call.get("id")))
+            match = _CALL_ID.fullmatch(str(call.get("id")))
             name = call["function"]["name"]
             if match and isinstance(name, str) and name:
                 counter = int(match[1])
@@ -85,15 +85,11 @@ def _context(messages: Sequence[Mapping[str, Any]]) -> OpenAIMappingContext:
 
 
 def _arguments_json(arguments: Any) -> str:
-    """A tool call's arguments as the JSON string ``from_openai`` takes.
+    """Call arguments as the JSON string ``from_openai`` takes.
 
-    vLLM parses the request's JSON string into a dict before the tokenizer sees the
-    conversation, so a call with arguments arrives as a dict (``{}`` for none).
-    Dicts are serialized as compact JSON, the form the model emits, so canonical
-    arguments replay to the generated tokens. vLLM has already discarded the
-    original string, so other spellings (escapes, number formats, whitespace)
-    are normalized. Strings pass unchanged: the renderer keeps arguments that
-    are not a JSON object as generated.
+    vLLM hands valid arguments over as a dict; they are serialized compact, the
+    form the model emits (other spellings are normalized). Strings, which the
+    renderer keeps when they are not a JSON object, pass unchanged.
     """
     if isinstance(arguments, str):
         return arguments
@@ -141,7 +137,7 @@ def encode_chat(
     tools: Sequence[Mapping[str, Any]] | None = None,
     reasoning_effort: str | None = None,
     system_defaults: Mapping[str, Any] | None = None,
-    enable_thinking: bool | None = None,
+    enable_thinking: object = None,
     tokenize: bool = True,
 ) -> list[int] | str:
     """Map OpenAI messages to an Apertus 2 conversation ending at ``<|/in|>``.
@@ -153,12 +149,12 @@ def encode_chat(
             "Apertus 2 generates after an input message: end the conversation "
             "with a user or tool message (assistant prefill is unsupported)"
         )
-    if reasoning_effort in _THINKING_OFF or enable_thinking is False:
+    off = str(enable_thinking).lower() in {"false", "0"}
+    if reasoning_effort in _THINKING_OFF or off:
         raise ValueError(
             "Apertus 2 always thinks: use reasoning_effort low, medium or high"
         )
-    if reasoning_effort is not None:
-        reasoning_effort = _EFFORT_ALIASES.get(reasoning_effort, reasoning_effort)
+    reasoning_effort = _EFFORT_ALIASES.get(reasoning_effort, reasoning_effort)
     try:
         cleaned = _clean_messages(messages)
         result = from_openai(
