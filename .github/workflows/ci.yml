@@ -8,6 +8,10 @@ on:
 permissions:
   contents: read
 
+env:
+  # Verified Apertus_2_instruct tokenizer baseline; keep in sync with README.md.
+  TOKENIZER_REF: b801ff1b00d933d10bba90b0c22307157299faa7
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -37,5 +41,44 @@ jobs:
         run: make examples
       - name: Tests
         run: make test
+      - uses: actions/checkout@v4
+        with:
+          repository: swiss-ai/apertus-omni-tokenizer
+          ref: ${{ env.TOKENIZER_REF }}
+          path: omnitok
+      - name: Tokenizer artifact
+        run: make check-artifact APERTUS_ENCODING=omnitok/tokenizers/Apertus_2_instruct
       - name: Built distribution
         run: make check-dist
+
+  # vLLM plugin on stock vLLM 0.28, CPU only: unit tests, then the end-to-end
+  # smoke test against a tiny random-weight model. The image runs Python 3.12,
+  # below the package floor, so the plugin is installed without the pin.
+  vllm-plugin:
+    name: vLLM plugin (vLLM 0.28 CPU)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container:
+      image: vllm/vllm-openai-cpu:v0.28.0
+      options: --shm-size=1g
+    env:
+      APERTUS_ENCODING: omnitok/tokenizers/Apertus_2_instruct
+      VLLM_CPU_KVCACHE_SPACE: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: swiss-ai/apertus-omni-tokenizer
+          ref: ${{ env.TOKENIZER_REF }}
+          path: omnitok
+      - name: Install plugin
+        run: pip install -q pytest && pip install -q --no-deps --ignore-requires-python .
+      - name: Unit tests
+        run: python -m pytest tests/vllm_plugin -q
+      - name: End-to-end smoke test
+        run: |
+          python tests/vllm_plugin/e2e/make_tiny_model.py "$APERTUS_ENCODING" /tmp/tiny
+          vllm serve /tmp/tiny --served-model-name tiny --tokenizer-mode apertus2 \
+            --reasoning-parser apertus2 --enable-auto-tool-choice \
+            --tool-call-parser apertus2 --max-model-len 2048 --dtype bfloat16 &
+          python tests/vllm_plugin/e2e/smoke.py --wait 600

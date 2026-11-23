@@ -225,19 +225,69 @@ vllm serve <checkpoint> --tokenizer-mode apertus2 --reasoning-parser apertus2 \
     --enable-auto-tool-choice --tool-call-parser apertus2
 ```
 
-Chat requests are mapped with `from_openai` (`reasoning_effort` and `tools`
-become the system frame) and encoded to token IDs with the checkpoint's
-tokenizer; generated `think`, `reply` and `call` frames stream back as
-`reasoning`, `content` and `tool_calls`. Other frame kinds (`claim`, unknown)
-pass through as content. `/v1/completions` is unchanged. Not yet applied:
-generation constraints (`forbidden_token_ids`) and the tool-call ID context for
-multi-turn tool results. vLLM decodes replayed tool-call arguments, so the
-plugin re-serializes them as compact JSON; other spellings are normalized.
+The server (and offline `LLM` with this tokenizer mode) refuses to start
+without `--reasoning-parser apertus2` (requests would skip the guards below)
+and with speculative decoding (vLLM then ignores `logit_bias`). Offline
+`LLM(..., reasoning_parser="apertus2").chat()` renders prompts with the plugin
+but runs neither the guards nor the parser: set the forbidden-token
+`logit_bias` in `SamplingParams` and parse outputs with apertus-common.
+
+Requests:
+
+- Messages are mapped with `from_openai` and encoded to token IDs; leading
+  system and developer messages merge into `behavior`, participant `name`s are
+  dropped. A later system or developer message is rejected (no host role
+  yet).
+- Every request gets a -100 `logit_bias` on all forbidden special tokens (a
+  strong bias, not a hard mask).
+- Rejected with HTTP 400: `ignore_eos`, `min_tokens`, beam search, `stop`,
+  stop token IDs other than `<|wait|>`, forced `tool_choice`,
+  `parallel_tool_calls: false`, constrained outputs, prompt truncation,
+  `allowed_token_ids`, `logit_bias` or `bad_words` on special tokens,
+  `reasoning_effort` other than `low`, `medium` or `high` (including `none`,
+  `xhigh`, `max`), `enable_thinking: false` and invalid
+  conversations such as a trailing assistant message.
+- Replay matches the generation: valid tool-call arguments (parsed by vLLM)
+  are re-serialized as compact JSON, others replay unchanged. Clients keep a
+  burst's order only by sending one assistant message per streamed run.
+
+Responses (streaming and non-streaming alike):
+
+- Generated token IDs are parsed with `TokenStreamParser`; only control token
+  IDs frame messages. `think`, `reply` and `call` become `reasoning`, `content`
+  and `tool_calls`.
+- A call is returned once its message is complete, with its arguments as
+  generated and the ID `apertus_<counter>`, so truncated histories keep their
+  counters. A counter the model reuses gets a `_` suffix and is renumbered on
+  replay (the profile would reject it as a harness error); calls with other
+  IDs are numbered after the highest known counter, so mixed histories may
+  replay counters out of order.
+- Calls are dropped when the request disables tools (no tools, or
+  `tool_choice` `none` or `null`). Claims and unknown output
+  types are omitted. At malformed output the plugin stops: messages before it
+  are returned, the rest is dropped (text already streamed stays).
+- Only a cut message is flagged (`finish_reason: length`), and not when a
+  complete call came first (vLLM then reports `tool_calls`). The profile's
+  recovery needs `/v1/completions` or `return_token_ids`.
+
+Not covered:
+
+- `/v1/completions`: unchanged; clients apply the constraints themselves.
+- The batch endpoint: vLLM 0.28 drops the bias there.
+- `/v1/messages`: vLLM fails a response whose call arguments are not valid JSON.
+- Streamed Responses `function_call` items carry vLLM's own IDs
+  (`response.completed` carries `apertus_<counter>`), and with
+  `previous_response_id` earlier calls are not seen for counter reuse.
 
 The integration lives in `apertus_common.vllm`, is excluded from the strict
 type checks (vLLM has no macOS wheels) and is tested in a CPU-only vLLM
 container: `tests/vllm_plugin/Dockerfile`, then `pytest tests/vllm_plugin` with
-`APERTUS_ENCODING` pointing at an `Apertus_2_instruct` tokenizer directory.
+`APERTUS_ENCODING` pointing at an `Apertus_2_instruct` tokenizer directory. An
+end-to-end smoke test serves a tiny random-weight model with the plugin on the
+official vLLM CPU image and checks the chat, Responses and Anthropic endpoints:
+`tests/vllm_plugin/e2e/run.sh <tokenizer_dir> <model_dir>` (Docker; the model is
+created with `make_tiny_model.py`, which needs torch and transformers). CI runs
+both in the `vllm/vllm-openai-cpu:v0.28.0` image (job `vllm-plugin`).
 
 ## Prepare datasets
 
