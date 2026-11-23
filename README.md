@@ -227,7 +227,10 @@ vllm serve <checkpoint> --tokenizer-mode apertus2 --reasoning-parser apertus2 \
 
 The server (and offline `LLM` with this tokenizer mode) refuses to start
 without `--reasoning-parser apertus2` (requests would skip the guards below)
-and with speculative decoding (vLLM then ignores `logit_bias`).
+and with speculative decoding (vLLM then ignores `logit_bias`). Offline
+`LLM(..., reasoning_parser="apertus2").chat()` renders prompts with the plugin
+but runs neither the guards nor the parser: set the forbidden-token
+`logit_bias` in `SamplingParams` and parse outputs with apertus-common.
 
 Requests:
 
@@ -235,7 +238,8 @@ Requests:
   system and developer messages merge into `behavior`, participant `name`s are
   dropped. A later system or developer message is rejected (no host role
   yet).
-- Every request gets a -100 `logit_bias` on all forbidden special tokens.
+- Every request gets a -100 `logit_bias` on all forbidden special tokens (a
+  strong bias, not a hard mask).
 - Rejected with HTTP 400: `ignore_eos`, `min_tokens`, beam search, `stop`,
   stop token IDs other than `<|wait|>`, forced `tool_choice`,
   `parallel_tool_calls: false`, constrained outputs, prompt truncation,
