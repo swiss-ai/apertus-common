@@ -3,15 +3,21 @@
 Serves the tiny random model from ``make_tiny_model.py`` (see ``run.sh``), so
 generations are noise: the checks cover plugin loading, request guards,
 prompt rendering and the response shape on the chat, Responses and Anthropic
-endpoints. Usage: python smoke.py [base_url]
+endpoints. Usage: python smoke.py [--wait SECONDS] [base_url]
 """
 
+import argparse
 import json
 import sys
+import time
 import urllib.error
 import urllib.request
 
-BASE = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:8000"
+ARGS = argparse.ArgumentParser()
+ARGS.add_argument("base_url", nargs="?", default="http://localhost:8000")
+ARGS.add_argument("--wait", type=float, default=0, help="seconds to wait for /health")
+OPTIONS = ARGS.parse_args()
+BASE = OPTIONS.base_url
 MODEL = "tiny"
 CONTROL_IDS = range(7, 13)  # <|in|> .. <|wait|> in Apertus_2_instruct
 BOS = 1
@@ -64,7 +70,21 @@ def no_glyphs(*texts: str | None) -> bool:
     return all("<|" not in (text or "") for text in texts)
 
 
+def wait_for_server(seconds: float) -> None:
+    deadline = time.monotonic() + seconds
+    while True:
+        try:
+            urllib.request.urlopen(BASE + "/health", timeout=5)
+        except OSError:
+            if time.monotonic() > deadline:
+                sys.exit("server not ready")
+            time.sleep(5)
+        else:
+            return
+
+
 def main() -> None:
+    wait_for_server(OPTIONS.wait)
     status, body = chat(return_token_ids=True, tools=TOOLS)
     message = body["choices"][0]["message"] if status == 200 else {}
     check("chat 200", status == 200, body)

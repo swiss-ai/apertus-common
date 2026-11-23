@@ -282,7 +282,8 @@ container: `tests/vllm_plugin/Dockerfile`, then `pytest tests/vllm_plugin` with
 end-to-end smoke test serves a tiny random-weight model with the plugin on the
 official vLLM CPU image and checks the chat, Responses and Anthropic endpoints:
 `tests/vllm_plugin/e2e/run.sh <tokenizer_dir> <model_dir>` (Docker; the model is
-created with `make_tiny_model.py`, which needs torch and transformers).
+created with `make_tiny_model.py`, which needs torch and transformers). CI runs
+both in the `vllm/vllm-openai-cpu:v0.28.0` image (job `vllm-plugin`).
 
 ## Prepare datasets
 

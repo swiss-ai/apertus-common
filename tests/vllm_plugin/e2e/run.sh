@@ -28,9 +28,4 @@ docker run -d --name apertus2-e2e --shm-size=1g -p 8000:8000 \
             --reasoning-parser apertus2 --enable-auto-tool-choice \
             --tool-call-parser apertus2 --max-model-len 2048 --dtype bfloat16' >/dev/null
 
-for _ in $(seq 1 120); do
-    curl -sf localhost:8000/health >/dev/null && break
-    docker ps -q -f name=apertus2-e2e | grep -q . || { docker logs apertus2-e2e | tail -30; exit 1; }
-    sleep 2
-done
-python "$HERE/smoke.py" http://localhost:8000
+python "$HERE/smoke.py" --wait 600 || { docker logs apertus2-e2e | tail -30; exit 1; }
